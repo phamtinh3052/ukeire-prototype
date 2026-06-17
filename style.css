@@ -211,6 +211,40 @@ body {
     color: #666;
 }
 
+.record-meta-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 16px;
+    padding: 5px 8px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.record-meta-bar input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    padding: 4px 7px;
+    font-size: 0.82em;
+}
+
+.record-meta-bar select {
+    width: auto;
+    padding: 4px 7px;
+    font-size: 0.82em;
+    flex-shrink: 0;
+}
+
+.record-meta-bar button {
+    padding: 4px 10px;
+    font-size: 0.82em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 #workspace {
     flex: 1;
     margin-left: 16px;
@@ -461,6 +495,7 @@ button.active { background: #333; color: #fff; border-color: #333; }
     .main-content { padding: 12px; }
     .main-content h2 { margin: 0 0 8px 44px; }
     .records-panel { margin-left: 0; }
+    .record-meta-bar { margin-left: 0; }
     #workspace { margin-left: 0; }
     .sidebar-toggle { display: block; }
 
