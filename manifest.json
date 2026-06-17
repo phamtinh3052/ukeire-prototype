@@ -1,0 +1,19 @@
+{
+  "name": "納品書管理",
+  "short_name": "納品書",
+  "description": "納品書のアップロード・アノテーション・チェック管理",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f0f2f5",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
