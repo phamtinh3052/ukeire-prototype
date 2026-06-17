@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>プロトタイプ: 回転とズーム</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <section id="auth-screen" class="auth-screen">
+        <div class="auth-card">
+            <h1>ログイン</h1>
+            <p class="muted">デフォルト管理者: admin / admin123</p>
+            <input id="login-username" type="text" placeholder="ユーザー名">
+            <input id="login-password" type="password" placeholder="パスワード">
+            <button id="btn-login">ログイン</button>
+            <p id="login-error" class="error-text"></p>
+        </div>
+    </section>
+
+    <div id="app-root" class="app-layout hidden">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button"><i class="fa-solid fa-bars"></i><span>ツール</span></button>
+        <div id="sidebar-overlay" class="sidebar-overlay"></div>
+        <div id="eraser-indicator" class="eraser-indicator"></div>
+
+        <aside id="sidebar" class="sidebar">
+            <input type="file" id="file-input" accept="image/*,application/pdf" style="display: none;">
+
+            <div class="tool-group sidebar-collapse-row">
+                <button id="btn-sidebar-collapse" type="button" title="サイドバーを縮小/展開">
+                    <i id="sidebar-collapse-icon" class="fa-solid fa-angles-left"></i>
+                    <span class="sidebar-label">サイドバー縮小</span>
+                </button>
+            </div>
+
+            <div class="tool-group">
+                <div id="current-user-label" class="muted sidebar-collapsible-text"></div>
+                <button id="btn-open-admin" style="display:none;"><i class="fa-solid fa-user-shield"></i><span class="sidebar-label">管理ページを開く</span></button>
+            </div>
+
+            <div class="sidebar-title">アップロード</div>
+            <div class="tool-group">
+                <button id="btn-upload"><i class="fa-solid fa-file-arrow-up"></i><span class="sidebar-label">納品書をアップロード</span></button>
+            </div>
+
+            <div class="sidebar-title">納品書ステータス</div>
+            <div class="tool-group">
+                <input type="text" id="record-name" class="sidebar-collapsible-input" placeholder="納品書名">
+                <label class="sidebar-collapsible-field"><span class="sidebar-label">ステータス</span>
+                    <select id="record-status" class="sidebar-collapsible-input">
+                        <option value="not_checked">未チェック</option>
+                        <option value="checking">確認中</option>
+                        <option value="done">確認完了</option>
+                    </select>
+                </label>
+                <button id="btn-save-record"><i class="fa-solid fa-floppy-disk"></i><span class="sidebar-label">保存</span></button>
+            </div>
+
+            <div class="sidebar-title">ツール</div>
+            <div class="tool-group">
+                <button id="btn-pan" class="btn-pan active"><i class="fa-solid fa-hand"></i><span class="sidebar-label">移動</span></button>
+                <button id="btn-brush"><i class="fa-solid fa-paintbrush"></i><span class="sidebar-label">ブラシ</span></button>
+                <button id="btn-eraser"><i class="fa-solid fa-eraser"></i><span class="sidebar-label">消しゴム</span></button>
+                <button id="btn-crop" class="btn-crop"><i class="fa-solid fa-crop-simple"></i><span class="sidebar-label">切り抜き</span></button>
+            </div>
+
+            <div id="crop-actions" class="tool-group" style="display: none;">
+                <button id="btn-crop-apply" class="btn-crop"><i class="fa-solid fa-check"></i><span class="sidebar-label">切り抜きを適用</span></button>
+                <button id="btn-crop-cancel"><i class="fa-solid fa-xmark"></i><span class="sidebar-label">選択をキャンセル</span></button>
+            </div>
+
+            <div class="sidebar-title">描画</div>
+            <div class="tool-group">
+                <label class="sidebar-collapsible-field"><span class="sidebar-label">色</span> <input type="color" id="color-picker" value="#ff0000"></label>
+                <label class="sidebar-collapsible-field"><span class="sidebar-label">太さ</span> <input type="range" id="line-width" min="1" max="50" value="5" style="flex:1"></label>
+            </div>
+
+            <div class="sidebar-title">回転</div>
+            <div class="tool-group">
+                <button id="btn-rotate-cw" class="btn-rotate"><i class="fa-solid fa-rotate-right"></i><span class="sidebar-label">90°回転</span></button>
+            </div>
+
+            <div class="sidebar-title">ズーム</div>
+            <div class="tool-group">
+                <div class="tool-group-row">
+                    <button id="btn-zoom-in" class="btn-zoom"><i class="fa-solid fa-magnifying-glass-plus"></i><span class="sidebar-label">拡大</span></button>
+                    <button id="btn-zoom-out" class="btn-zoom"><i class="fa-solid fa-magnifying-glass-minus"></i><span class="sidebar-label">縮小</span></button>
+                </div>
+                <button id="btn-zoom-fit"><i class="fa-solid fa-expand"></i><span class="sidebar-label">画面に合わせる</span></button>
+                <div id="zoom-percent" class="sidebar-collapsible-text">100%</div>
+            </div>
+
+            <div class="sidebar-title">編集</div>
+            <div class="tool-group">
+                <button id="btn-undo"><i class="fa-solid fa-rotate-left"></i><span class="sidebar-label">元に戻す</span></button>
+                <button id="btn-clear" class="btn-danger"><i class="fa-solid fa-trash"></i><span class="sidebar-label">すべて削除</span></button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="header-container">
+                <h2>納品書管理（デフォルト: 今日）</h2>
+                <div class="header-right">
+                    <div id="login-user-info" class="login-user-info"></div>
+                    <button id="btn-header-logout" class="btn-header-logout"><i class="fa-solid fa-right-from-bracket"></i><span>ログアウト</span></button>
+                </div>
+            </div>
+
+            <section class="records-panel">
+                <div class="records-toolbar">
+                    <input id="filter-date" type="date">
+                    <button id="btn-filter-today"><i class="fa-solid fa-calendar-day"></i><span>今日</span></button>
+                </div>
+                <div id="records-list" class="records-list"></div>
+            </section>
+
+            <div id="workspace" class="pan-mode">
+                <div id="drop-zone-text" onclick="document.getElementById('file-input').click()">
+                    先に納品書を選択またはアップロードしてください
+                </div>
+
+                <div class="canvas-container" id="canvas-wrapper">
+                    <canvas id="bg-canvas"></canvas>
+                    <canvas id="paint-canvas" class="no-draw"></canvas>
+                    <canvas id="crop-canvas"></canvas>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app-main.js"></script>
+</body>
+</html>

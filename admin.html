@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理ページ</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="admin-page">
+        <section class="admin-card">
+            <div class="admin-header">
+                <h1>管理ページ</h1>
+                <div class="tool-group-row">
+                    <button id="btn-back">アプリへ戻る</button>
+                    <button id="btn-logout-admin" class="btn-danger">ログアウト</button>
+                </div>
+            </div>
+
+            <p id="admin-status" class="muted"></p>
+
+            <div class="sidebar-title">ユーザー作成</div>
+            <div class="admin-create-grid">
+                <input id="new-username" type="text" placeholder="新規ユーザー名">
+                <input id="new-password" type="password" placeholder="初期パスワード">
+                <select id="new-role">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                </select>
+                <label>ブラシ色 <input id="new-brush-color" type="color" value="#ff0000"></label>
+                <button id="btn-create-user">ユーザー追加</button>
+            </div>
+
+            <div class="sidebar-title">ユーザー一覧</div>
+            <div id="users-table" class="users-table"></div>
+        </section>
+    </main>
+
+    <script src="admin.js"></script>
+</body>
+</html>
