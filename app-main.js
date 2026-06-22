@@ -1,5 +1,10 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+// Cloudinary unsigned upload settings
+// localStorage là database chính - lưu tất cả records và file URLs
+const CLOUDINARY_CLOUD_NAME = 'dlnvnf9h3';
+const CLOUDINARY_UPLOAD_PRESET = 'ukeire-prototype';
+
 const USERS_KEY = 'ukeire_users_v1';
 const SESSION_KEY = 'ukeire_session_v1';
 const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
@@ -14,6 +19,7 @@ const btnLogin = document.getElementById('btn-login');
 
 const workspace = document.getElementById('workspace');
 const fileInput = document.getElementById('file-input');
+const folderInput = document.getElementById('folder-input');
 const canvasWrapper = document.getElementById('canvas-wrapper');
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
@@ -21,6 +27,7 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const sidebarCollapseIcon = document.getElementById('sidebar-collapse-icon');
 const eraserIndicator = document.getElementById('eraser-indicator');
+const uploadToast = document.getElementById('upload-toast');
 
 const bgCanvas = document.getElementById('bg-canvas');
 const bgCtx = bgCanvas.getContext('2d');
@@ -39,9 +46,11 @@ const btnHeaderLogout = document.getElementById('btn-header-logout');
 const btnOpenAdmin = document.getElementById('btn-open-admin');
 
 const btnUpload = document.getElementById('btn-upload');
+const btnUploadFolder = document.getElementById('btn-upload-folder');
 const recordNameInput = document.getElementById('record-name');
 const recordStatusInput = document.getElementById('record-status');
 const btnSaveRecord = document.getElementById('btn-save-record');
+const btnDeleteRecord = document.getElementById('btn-delete-record');
 const filterDateInput = document.getElementById('filter-date');
 const btnFilterToday = document.getElementById('btn-filter-today');
 const recordsList = document.getElementById('records-list');
@@ -70,6 +79,8 @@ let isCropping = false;
 let cropAnchor = null;
 let cropRect = null;
 
+let uploadToastTimeout = null;
+
 let currentRotation = 0;
 let currentScale = 1;
 let baseScale = 1;
@@ -91,6 +102,34 @@ function todayDateString() {
     const m = `${now.getMonth() + 1}`.padStart(2, '0');
     const d = `${now.getDate()}`.padStart(2, '0');
     return `${y}-${m}-${d}`;
+}
+
+function buildCloudinaryFolderByDate(dateStr) {
+    const fallback = todayDateString();
+    const target = (dateStr || fallback).trim();
+    const match = target.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        const [fy, fm, fd] = fallback.split('-');
+        return `nouhinsho/${fy}_${fm}_${fd}`;
+    }
+    const [, y, m, d] = match;
+    return `nouhinsho/${y}_${m}_${d}`;
+}
+
+function showUploadToast(message, type = 'info', autoDismiss = 0) {
+    uploadToast.className = `upload-toast toast-${type}`;
+    uploadToast.innerHTML = `<span style="flex:1">${message}</span>` +
+        `<button onclick="document.getElementById('upload-toast').classList.add('hidden')" ` +
+        `style="background:none;border:none;cursor:pointer;padding:0 0 0 10px;color:inherit;font-size:1.3em;line-height:1;" title="閉じる">×</button>`;
+    if (uploadToastTimeout) clearTimeout(uploadToastTimeout);
+    if (autoDismiss > 0) {
+        uploadToastTimeout = setTimeout(() => uploadToast.classList.add('hidden'), autoDismiss);
+    }
+}
+
+function hideUploadToast() {
+    if (uploadToastTimeout) clearTimeout(uploadToastTimeout);
+    uploadToast.classList.add('hidden');
 }
 
 function getUsers() {
@@ -132,6 +171,23 @@ function getRecords() {
 
 function saveRecords(records) {
     localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+}
+
+function readCloudinaryConfig() {
+    // Lấy từ constants (hardcoded)
+    return { cloudName: CLOUDINARY_CLOUD_NAME, uploadPreset: CLOUDINARY_UPLOAD_PRESET };
+}
+
+function ensureCloudinaryConfig() {
+    // Không cần prompt, lấy từ constants luôn
+    return readCloudinaryConfig();
+}
+
+function buildCloudinaryAssetUrl(publicId) {
+    const config = ensureCloudinaryConfig();
+    if (!config || !publicId) return '';
+    const cleanId = `${publicId}`.replace(/^\/+/, '');
+    return `https://res.cloudinary.com/${config.cloudName}/image/upload/${cleanId}`;
 }
 
 function setSession(userId) {
@@ -402,20 +458,18 @@ function normalizeRotationDeg(rotation) {
 
 function normalizeRecordStatus(record) {
     if (!record) return 'not_checked';
-    if (record.status === 'not_checked' || record.status === 'checking' || record.status === 'done') {
+    if (record.status === 'not_checked' || record.status === 'done') {
         return record.status;
     }
     return record.checked ? 'done' : 'not_checked';
 }
 
 function getRecordStatusLabel(status) {
-    if (status === 'checking') return '確認中';
     if (status === 'done') return '確認完了';
     return '未チェック';
 }
 
 function getRecordStatusClass(status) {
-    if (status === 'checking') return 'checking';
     if (status === 'done') return 'checked';
     return 'unchecked';
 }
@@ -442,10 +496,16 @@ function buildRecordSection(title, records) {
             const status = normalizeRecordStatus(record);
             const item = document.createElement('div');
             item.className = `record-item ${getRecordStatusClass(status)} ${record.id === currentRecordId ? 'active' : ''}`;
+            const uploadBadge = record.uploadStatus === 'uploading'
+                ? '<div class="meta"><span class="upload-badge badge-uploading">\u2601 アップロード中</span></div>'
+                : record.uploadStatus === 'failed'
+                ? '<div class="meta"><span class="upload-badge badge-failed">&#9888; アップロード失敗</span></div>'
+                : '';
             item.innerHTML = `
                 <div class="title">${record.name}</div>
                 <div class="meta">日付: ${formatRecordDate(record.date)}</div>
                 <div class="meta">状態: ${getRecordStatusLabel(status)}</div>
+                ${uploadBadge}
             `;
             item.addEventListener('click', () => openRecord(record.id));
             grid.appendChild(item);
@@ -469,7 +529,7 @@ function initButtonTooltips() {
 function renderRecordsByDate() {
     const selectedDate = filterDateInput.value || todayDateString();
     const records = getRecords()
-        .filter((r) => r.date === selectedDate)
+        .filter((r) => r.date === selectedDate && !r.isDeleted)
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 
     recordsList.innerHTML = '';
@@ -480,14 +540,11 @@ function renderRecordsByDate() {
     }
 
     const notCheckedRecords = [];
-    const checkingRecords = [];
     const doneRecords = [];
 
     records.forEach((record) => {
         const status = normalizeRecordStatus(record);
-        if (status === 'checking') {
-            checkingRecords.push(record);
-        } else if (status === 'done') {
+        if (status === 'done') {
             doneRecords.push(record);
         } else {
             notCheckedRecords.push(record);
@@ -495,7 +552,6 @@ function renderRecordsByDate() {
     });
 
     recordsList.appendChild(buildRecordSection('未チェック', notCheckedRecords));
-    recordsList.appendChild(buildRecordSection('確認中', checkingRecords));
     recordsList.appendChild(buildRecordSection('確認完了', doneRecords));
 }
 
@@ -510,72 +566,378 @@ function updateRecordMetaUI(record) {
     recordStatusInput.value = normalizeRecordStatus(record);
 }
 
+function resetWorkspaceForNoRecord(message = '先に納品書を選択またはアップロードしてください') {
+    currentRecordId = null;
+    rawSourceData = null;
+    linesHistory = [];
+    currentLine = null;
+    isDrawing = false;
+    isCropping = false;
+    cropAnchor = null;
+    cropRect = null;
+
+    bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+    cropCtx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+
+    const dropZone = document.getElementById('drop-zone-text');
+    dropZone.style.display = '';
+    dropZone.textContent = message;
+    canvasWrapper.style.display = 'none';
+
+    updateRecordMetaUI(null);
+    cancelCropSelection();
+    setTool('pan');
+    updateToolUI();
+}
+
+function buildDeletedStoragePath(record) {
+    const baseFolder = `${buildCloudinaryFolderByDate(record?.date || todayDateString())}/deleted`;
+    const sourcePath = `${record?.sourceStoragePath || ''}`.trim();
+
+    if (sourcePath.includes('/deleted/')) return sourcePath;
+
+    const fileName = sourcePath.split('/').pop() || `${record?.id || `r-${Date.now()}`}`;
+    return `${baseFolder}/${fileName}`;
+}
+
+function deleteCurrentRecord() {
+    if (!currentRecordId) {
+        alert('削除する納品書が選択されていません。');
+        return;
+    }
+
+    const records = getRecords();
+    const record = records.find((r) => r.id === currentRecordId);
+    if (!record) {
+        resetWorkspaceForNoRecord();
+        renderRecordsByDate();
+        return;
+    }
+
+    const confirmed = confirm(`「${record.name || '無題'}」を削除しますか？`);
+    if (!confirmed) return;
+
+    const idx = records.findIndex((r) => r.id === currentRecordId);
+    if (idx < 0) return;
+
+    const deletedPath = buildDeletedStoragePath(record);
+    const updatedRecord = {
+        ...record,
+        isDeleted: true,
+        deletedAt: new Date().toISOString(),
+        deletedStoragePath: deletedPath,
+        sourceStoragePath: deletedPath,
+        uploadStatus: 'deleted',
+        updatedAt: new Date().toISOString(),
+        editorUserId: currentUser?.id || record.editorUserId
+    };
+
+    records[idx] = updatedRecord;
+    saveRecords(records);
+    resetWorkspaceForNoRecord('納品書をdeletedフォルダに移動しました。');
+    renderRecordsByDate();
+    showUploadToast('<i class="fa-solid fa-box-archive"></i> 削除せずに deleted フォルダへ移動しました。', 'success', 4000);
+}
+
 function cloneLines(lines) {
     return JSON.parse(JSON.stringify(lines || []));
 }
 
-function dataUrlToImage(dataUrl, callback) {
-    const img = new Image();
-    img.onload = () => callback(img);
-    img.src = dataUrl;
+function dataUrlToBlob(dataUrl) {
+    const parts = dataUrl.split(',');
+    if (parts.length !== 2) throw new Error('Invalid data URL');
+    const mimeMatch = parts[0].match(/data:(.*?);base64/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+    const binary = atob(parts[1]);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
 }
 
 function parseFileToDataUrl(file, done) {
     const reader = new FileReader();
 
+    reader.onerror = () => done(null, new Error('ファイルの読み込みに失敗しました。'));
+
     if (file.type === 'application/pdf') {
         reader.onload = (ev) => {
             const typedarray = new Uint8Array(ev.target.result);
-            pdfjsLib.getDocument(typedarray).promise.then((pdf) => {
-                pdf.getPage(1).then((page) => {
+            pdfjsLib.getDocument(typedarray).promise
+                .then((pdf) => pdf.getPage(1))
+                .then((page) => {
                     const viewport = page.getViewport({ scale: 1.2 });
                     const tmpCanvas = document.createElement('canvas');
                     const tmpCtx = tmpCanvas.getContext('2d');
                     tmpCanvas.width = viewport.width;
                     tmpCanvas.height = viewport.height;
-                    page.render({ canvasContext: tmpCtx, viewport }).promise.then(() => {
-                        done(tmpCanvas.toDataURL('image/png'));
+                    return page.render({ canvasContext: tmpCtx, viewport }).promise.then(() => {
+                        done(tmpCanvas.toDataURL('image/png'), null);
                     });
-                });
-            });
+                })
+                .catch((err) => done(null, err instanceof Error ? err : new Error('PDFの処理に失敗しました。')));
         };
         reader.readAsArrayBuffer(file);
         return;
     }
 
-    if (file.type.startsWith('image/')) {
+    if (file.type.startsWith('image/'))  {
         reader.onload = (ev) => {
-            done(ev.target.result);
+            done(ev.target.result, null);
         };
         reader.readAsDataURL(file);
+        return;
     }
+
+    done(null, new Error('画像またはPDFファイルのみ対応しています。'));
 }
 
-function createRecordFromUpload(file) {
-    if (!file) return;
+async function uploadFileToCloudinary(file, recordId, dateStr) {
+    const config = ensureCloudinaryConfig();
+    if (!config) return null;
 
-    parseFileToDataUrl(file, (bgDataUrl) => {
-        const date = filterDateInput.value || todayDateString();
-        const records = getRecords();
+    const endpoint = `https://api.cloudinary.com/v1_1/${config.cloudName}/image/upload`;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', config.uploadPreset);
+    formData.append('folder', buildCloudinaryFolderByDate(dateStr || filterDateInput.value || todayDateString()));
 
-        const record = {
-            id: `r-${Date.now()}`,
-            name: file.name,
-            date,
-            status: 'not_checked',
-            checked: false,
-            rotation: 0,
-            bgDataUrl,
-            linesHistory: [],
-            editorUserId: currentUser.id,
-            updatedAt: new Date().toISOString()
-        };
-
-        records.push(record);
-        saveRecords(records);
-        renderRecordsByDate();
-        openRecord(record.id);
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData
     });
+
+    if (!response.ok) {
+        const text = await response.text();
+        let detail = text;
+        try { detail = JSON.parse(text)?.error?.message || text; } catch {}
+        throw new Error(`Cloudinary upload failed (${response.status}): ${detail}`);
+    }
+
+    const result = await response.json();
+    return {
+        storagePath: result.public_id || '',
+        downloadURL: result.secure_url || '',
+        deleteToken: result.delete_token || ''
+    };
+}
+
+function isSupportedUploadFile(file) {
+    if (!file) return false;
+    const type = `${file.type || ''}`.toLowerCase();
+    if (type.startsWith('image/') || type === 'application/pdf') return true;
+    const name = `${file.name || ''}`.toLowerCase();
+    return /\.(png|jpe?g|gif|bmp|webp|svg|pdf)$/i.test(name);
+}
+
+function createRecordFromUpload(file, options = {}) {
+    if (!file) return Promise.resolve(null);
+    const {
+        lockSingleButton = true,
+        showSingleToast = true,
+        focusPreview = true
+    } = options;
+
+    if (lockSingleButton) btnUpload.disabled = true;
+
+    const date = filterDateInput.value || todayDateString();
+    const records = getRecords();
+
+    const record = {
+        id: `r-${Date.now()}`,
+        name: file.name,
+        date,
+        status: 'not_checked',
+        checked: false,
+        rotation: 0,
+        sourceUrl: '',
+        sourceStoragePath: '',
+        sourceDeleteToken: '',
+        sourceFileType: file.type || '',
+        uploadStatus: 'uploading',
+        linesHistory: [],
+        editorUserId: currentUser.id,
+        updatedAt: new Date().toISOString()
+    };
+
+    records.push(record);
+    saveRecords(records);
+    renderRecordsByDate();
+
+    // Display locally from memory (not stored in localStorage), then upload processed image blob.
+    return new Promise((resolve) => {
+        parseFileToDataUrl(file, (bgDataUrl, parseError) => {
+            if (parseError || !bgDataUrl) {
+                const latestRecords = getRecords();
+                const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
+                if (latestIdx >= 0) {
+                    latestRecords[latestIdx].uploadStatus = 'failed';
+                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                    saveRecords(latestRecords);
+                    renderRecordsByDate();
+                }
+                if (lockSingleButton) btnUpload.disabled = false;
+                if (showSingleToast) {
+                    showUploadToast(
+                        `<i class="fa-solid fa-circle-exclamation"></i> ファイル処理失敗: ${parseError?.message || '不明なエラー'}`,
+                        'error'
+                    );
+                }
+                resolve({ ok: false, recordId: record.id, reason: 'parse-failed' });
+                return;
+            }
+
+            if (focusPreview) {
+                currentRecordId = record.id;
+                updateRecordMetaUI(record);
+                const localImg = new Image();
+                localImg.onload = () => {
+                    rawSourceData = { type: 'image', data: localImg };
+                    currentRotation = 0;
+                    initContainer([]);
+                    renderRecordsByDate();
+                };
+                localImg.onerror = () => {
+                    if (showSingleToast) {
+                        showUploadToast('<i class="fa-solid fa-circle-exclamation"></i> 画像プレビューの表示に失敗しました。', 'error');
+                    }
+                };
+                localImg.src = bgDataUrl;
+            }
+
+            let uploadBlob;
+            try {
+                uploadBlob = dataUrlToBlob(bgDataUrl);
+            } catch (blobError) {
+                const latestRecords = getRecords();
+                const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
+                if (latestIdx >= 0) {
+                    latestRecords[latestIdx].uploadStatus = 'failed';
+                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                    saveRecords(latestRecords);
+                    renderRecordsByDate();
+                }
+                if (lockSingleButton) btnUpload.disabled = false;
+                if (showSingleToast) {
+                    showUploadToast(
+                        `<i class="fa-solid fa-circle-exclamation"></i> 画像変換失敗: ${blobError?.message || '不明なエラー'}`,
+                        'error'
+                    );
+                }
+                resolve({ ok: false, recordId: record.id, reason: 'blob-failed' });
+                return;
+            }
+
+            if (showSingleToast) {
+                showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> Cloudinaryにアップロード中...', 'info');
+            }
+
+            uploadFileToCloudinary(uploadBlob, record.id, record.date)
+                .then((uploadResult) => {
+                    if (!uploadResult) {
+                        resolve({ ok: false, recordId: record.id, reason: 'upload-empty' });
+                        return;
+                    }
+
+                    const latestRecords = getRecords();
+                    const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
+                    if (latestIdx < 0) {
+                        resolve({ ok: false, recordId: record.id, reason: 'record-missing' });
+                        return;
+                    }
+
+                    latestRecords[latestIdx].sourceUrl = uploadResult.downloadURL;
+                    latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath;
+                    latestRecords[latestIdx].sourceDeleteToken = uploadResult.deleteToken || '';
+                    latestRecords[latestIdx].uploadStatus = 'done';
+                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                    saveRecords(latestRecords);
+                    renderRecordsByDate();
+
+                    if (showSingleToast) {
+                        showUploadToast('<i class="fa-solid fa-circle-check"></i> Cloudinaryへのアップロード完了', 'success', 4000);
+                    }
+                    resolve({ ok: true, recordId: record.id });
+                })
+                .catch((error) => {
+                    console.warn('Cloudinary upload failed:', error);
+
+                    const latestRecords = getRecords();
+                    const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
+                    if (latestIdx >= 0) {
+                        latestRecords[latestIdx].uploadStatus = 'failed';
+                        latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                        saveRecords(latestRecords);
+                        renderRecordsByDate();
+                    }
+
+                    if (showSingleToast) {
+                        showUploadToast(
+                            `<i class="fa-solid fa-circle-exclamation"></i> アップロード失敗: ${error.message || 'ネットワークエラー'}`,
+                            'error'
+                        );
+                    }
+                    resolve({ ok: false, recordId: record.id, reason: 'upload-failed' });
+                })
+                .finally(() => {
+                    if (lockSingleButton) btnUpload.disabled = false;
+                });
+        });
+    });
+}
+
+async function createRecordsFromFolder(files) {
+    const allFiles = Array.from(files || []);
+    const targetFiles = allFiles.filter(isSupportedUploadFile);
+
+    if (targetFiles.length === 0) {
+        showUploadToast('<i class="fa-solid fa-circle-info"></i> フォルダ内に対応ファイル（画像/PDF）がありません。', 'error', 4500);
+        return;
+    }
+
+    btnUpload.disabled = true;
+    btnUploadFolder.disabled = true;
+
+    showUploadToast(`<i class="fa-solid fa-spinner fa-spin"></i> フォルダアップロード中... (0/${targetFiles.length})`, 'info');
+
+    let success = 0;
+    let failed = 0;
+    let firstSuccessRecordId = null;
+
+    for (let i = 0; i < targetFiles.length; i++) {
+        const file = targetFiles[i];
+        const result = await createRecordFromUpload(file, {
+            lockSingleButton: false,
+            showSingleToast: false,
+            focusPreview: false
+        });
+
+        if (result?.ok) {
+            success += 1;
+            if (!firstSuccessRecordId) firstSuccessRecordId = result.recordId;
+        } else {
+            failed += 1;
+        }
+
+        showUploadToast(
+            `<i class="fa-solid fa-spinner fa-spin"></i> フォルダアップロード中... (${i + 1}/${targetFiles.length})`,
+            'info'
+        );
+    }
+
+    btnUpload.disabled = false;
+    btnUploadFolder.disabled = false;
+
+    if (firstSuccessRecordId) {
+        openRecord(firstSuccessRecordId);
+    }
+
+    showUploadToast(
+        `<i class="fa-solid fa-circle-check"></i> フォルダアップロード完了: 成功 ${success}件 / 失敗 ${failed}件`,
+        failed > 0 ? 'error' : 'success',
+        5500
+    );
 }
 
 function openRecord(recordId) {
@@ -586,12 +948,64 @@ function openRecord(recordId) {
     currentRecordId = record.id;
     updateRecordMetaUI(record);
 
-    dataUrlToImage(record.bgDataUrl, (img) => {
-        rawSourceData = { type: 'image', data: img };
-        currentRotation = normalizeRotationDeg(record.rotation);
-        initContainer(cloneLines(record.linesHistory));
+    // Prefer Cloudinary URL; fall back to public_id and then legacy bgDataUrl for old records
+    let imageUrl = record.sourceUrl || '';
+    if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('data:')) {
+        imageUrl = buildCloudinaryAssetUrl(imageUrl);
+    }
+    if (!imageUrl && record.sourceStoragePath) {
+        imageUrl = buildCloudinaryAssetUrl(record.sourceStoragePath);
+    }
+    if (!imageUrl && record.bgDataUrl) {
+        imageUrl = record.bgDataUrl;
+    }
+
+    if (!imageUrl) {
+        const dropZone = document.getElementById('drop-zone-text');
+        dropZone.style.display = '';
+        dropZone.textContent = record.uploadStatus === 'failed'
+            ? 'アップロード失敗。ファイルを再アップロードしてください。'
+            : '画像をアップロード中... しばらくお待ちください。';
+        canvasWrapper.style.display = 'none';
+        rawSourceData = null;
         renderRecordsByDate();
-    });
+        return;
+    }
+
+    const loadImage = (useCors) => {
+        const img = new Image();
+        if (useCors && imageUrl.startsWith('http')) {
+            // Try CORS first so crop re-upload can use canvas.toBlob later.
+            img.crossOrigin = 'anonymous';
+        }
+
+        img.onload = () => {
+            rawSourceData = { type: 'image', data: img };
+            currentRotation = normalizeRotationDeg(record.rotation);
+            initContainer(cloneLines(record.linesHistory));
+            renderRecordsByDate();
+        };
+
+        img.onerror = () => {
+            if (useCors && imageUrl.startsWith('http')) {
+                // Some delivery settings block CORS; retry without CORS so at least preview is visible.
+                loadImage(false);
+                return;
+            }
+
+            const dropZone = document.getElementById('drop-zone-text');
+            dropZone.style.display = '';
+            dropZone.textContent = '画像の読み込みに失敗しました。';
+            canvasWrapper.style.display = 'none';
+            rawSourceData = null;
+            renderRecordsByDate();
+            showUploadToast('<i class="fa-solid fa-circle-exclamation"></i> 画像URLは有効ですが、アプリ内プレビューに失敗しました。', 'error', 5000);
+        };
+
+        img.src = imageUrl;
+    };
+
+    loadImage(imageUrl.startsWith('http'));
 }
 
 function saveCurrentRecordMetaAndCanvas() {
@@ -607,9 +1021,12 @@ function saveCurrentRecordMetaAndCanvas() {
     record.checked = record.status === 'done';
     record.rotation = normalizeRotationDeg(currentRotation);
     record.linesHistory = cloneLines(linesHistory);
-    record.bgDataUrl = bgCanvas.toDataURL('image/png');
     record.updatedAt = new Date().toISOString();
     record.editorUserId = currentUser.id;
+    // Migrate legacy records: remove bgDataUrl blob once sourceUrl is available
+    if (record.sourceUrl && record.bgDataUrl) {
+        delete record.bgDataUrl;
+    }
 
     records[idx] = record;
     saveRecords(records);
@@ -855,6 +1272,39 @@ function applyCrop() {
         resetToFit();
         setTool('pan');
         autoSaveCurrentRecord();
+
+        // Upload cropped image to Cloudinary and update sourceUrl
+        const cropRecordId = currentRecordId;
+        if (!cropRecordId) return;
+        const cropRecord = getRecords().find((r) => r.id === cropRecordId);
+        const cropFolderDate = cropRecord?.date || filterDateInput.value || todayDateString();
+        bgCanvas.toBlob((blob) => {
+            if (!blob) return;
+            showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> 切り抜き画像をアップロード中...', 'info');
+            uploadFileToCloudinary(blob, `${cropRecordId}_crop`, cropFolderDate)
+                .then((uploadResult) => {
+                    if (!uploadResult) return;
+                    const latestRecords = getRecords();
+                    const latestIdx = latestRecords.findIndex((r) => r.id === cropRecordId);
+                    if (latestIdx < 0) return;
+                    latestRecords[latestIdx].sourceUrl = uploadResult.downloadURL;
+                    latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath;
+                    latestRecords[latestIdx].sourceDeleteToken = uploadResult.deleteToken || '';
+                    latestRecords[latestIdx].uploadStatus = 'done';
+                    if (latestRecords[latestIdx].bgDataUrl) delete latestRecords[latestIdx].bgDataUrl;
+                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                    saveRecords(latestRecords);
+                    renderRecordsByDate();
+                    showUploadToast('<i class="fa-solid fa-circle-check"></i> 切り抜き完了・アップロード済み', 'success', 4000);
+                })
+                .catch((error) => {
+                    console.warn('Crop re-upload failed:', error);
+                    showUploadToast(
+                        `<i class="fa-solid fa-circle-exclamation"></i> アップロード失敗: ${error.message || 'ネットワークエラー'}`,
+                        'error'
+                    );
+                });
+        }, 'image/png');
     };
     img.src = bgCanvas.toDataURL();
 }
@@ -979,12 +1429,18 @@ btnOpenAdmin.addEventListener('click', () => {
 
 btnUpload.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => createRecordFromUpload(e.target.files[0]));
+btnUploadFolder.addEventListener('click', () => folderInput.click());
+folderInput.addEventListener('change', async (e) => {
+    await createRecordsFromFolder(e.target.files);
+    folderInput.value = '';
+});
 
 recordStatusInput.addEventListener('change', saveCurrentRecordMetaAndCanvas);
 btnSaveRecord.addEventListener('click', () => {
     saveCurrentRecordMetaAndCanvas();
     alert('保存しました。');
 });
+btnDeleteRecord.addEventListener('click', deleteCurrentRecord);
 
 filterDateInput.addEventListener('change', () => {
     autoSaveCurrentRecord();

@@ -128,27 +128,33 @@ body {
     background-color: #b91c1c;
 }
 
-.records-panel {
-    margin-left: 16px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 8px;
-}
-
 .records-toolbar {
     display: flex;
-    gap: 8px;
+    gap: 4px;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    width: 100%;
+}
+
+.records-toolbar input[type="date"] {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 5px;
+    font-size: 0.78em;
+}
+
+.records-toolbar button {
+    padding: 4px 7px;
+    flex-shrink: 0;
 }
 
 .records-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    max-height: 260px;
-    overflow: auto;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    width: 100%;
 }
 
 .record-section {
@@ -211,39 +217,6 @@ body {
     color: #666;
 }
 
-.record-meta-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: 16px;
-    padding: 5px 8px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    flex-shrink: 0;
-}
-
-.record-meta-bar input {
-    flex: 1;
-    min-width: 0;
-    width: auto;
-    padding: 4px 7px;
-    font-size: 0.82em;
-}
-
-.record-meta-bar select {
-    width: auto;
-    padding: 4px 7px;
-    font-size: 0.82em;
-    flex-shrink: 0;
-}
-
-.record-meta-bar button {
-    padding: 4px 10px;
-    font-size: 0.82em;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
 
 #workspace {
     flex: 1;
@@ -334,6 +307,10 @@ select {
 
 button:hover { background: #f7f7f7; }
 button.active { background: #333; color: #fff; border-color: #333; }
+button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
 
 .btn-danger,
 .btn-rotate,
@@ -494,8 +471,6 @@ button.active { background: #333; color: #fff; border-color: #333; }
 @media (max-width: 768px) {
     .main-content { padding: 12px; }
     .main-content h2 { margin: 0 0 8px 44px; }
-    .records-panel { margin-left: 0; }
-    .record-meta-bar { margin-left: 0; }
     #workspace { margin-left: 0; }
     .sidebar-toggle { display: block; }
 
@@ -511,3 +486,33 @@ button.active { background: #333; color: #fff; border-color: #333; }
 
     .sidebar.open { transform: translateX(0); }
 }
+
+/* ── Upload toast notification ───────────────────────── */
+.upload-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 20px;
+    max-width: 360px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.87em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+}
+.upload-toast.toast-info    { background: #ebf5fb; border: 1px solid #90cdf4; color: #1a56db; }
+.upload-toast.toast-success { background: #edf9ed; border: 1px solid #9ed29e; color: #276749; }
+.upload-toast.toast-error   { background: #fff4f4; border: 1px solid #f2b6b6; color: #b42318; }
+
+/* ── Upload status badge on record cards ─────────────── */
+.upload-badge {
+    font-size: 0.78em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-top: 2px;
+}
+.upload-badge.badge-uploading { background: #ebf5fb; color: #1a56db; }
+.upload-badge.badge-failed    { background: #fff4f4; color: #b42318; }
