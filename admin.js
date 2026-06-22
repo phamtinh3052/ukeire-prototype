@@ -3,6 +3,8 @@ const SESSION_KEY = 'ukeire_session_v1';
 const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
 const CLOUDINARY_CLOUD_NAME = 'dlnvnf9h3';
 const CLOUDINARY_UPLOAD_PRESET = 'ukeire-prototype';
+const SIDEBAR_COLLAPSED_KEY = 'ukeire_sidebar_collapsed_v1';
+const STORE_API_ENDPOINT = '/api/store';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -39,6 +41,17 @@ const nohinshoFolderInput = document.getElementById('nohinsho-folder-input');
 
 let activeAdminTab = 'users';
 let selectedRecordId = null;
+
+const DEFAULT_STORE_DATA = {
+    [USERS_KEY]: [],
+    [SESSION_KEY]: '',
+    [RECORDS_KEY]: [],
+    [SIDEBAR_COLLAPSED_KEY]: '0'
+};
+
+let storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
+let storeLoaded = false;
+let storePersistTimer = null;
 
 function todayDateString() {
     const now = new Date();
@@ -91,30 +104,132 @@ function buildCloudinaryAssetUrl(publicId) {
     return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${cleanId}`;
 }
 
-function getUsers() {
+function normalizeStorePayload(payload) {
+    const normalized = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
+    if (!payload || typeof payload !== 'object') return normalized;
+
+    normalized[USERS_KEY] = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
+    normalized[SESSION_KEY] = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY] : '';
+    normalized[RECORDS_KEY] = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
+    normalized[SIDEBAR_COLLAPSED_KEY] = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
+    return normalized;
+}
+
+function readLegacyStoreFromLocalStorage() {
     try {
-        const users = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
-        return Array.isArray(users) ? users : [];
-    } catch {
-        return [];
+        const usersRaw = localStorage.getItem(USERS_KEY);
+        const sessionRaw = localStorage.getItem(SESSION_KEY);
+        const recordsRaw = localStorage.getItem(RECORDS_KEY);
+        const sidebarRaw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+
+        const hasLegacyData = usersRaw !== null || sessionRaw !== null || recordsRaw !== null || sidebarRaw !== null;
+        if (!hasLegacyData) return null;
+
+        let users = [];
+        let records = [];
+
+        if (usersRaw) {
+            try {
+                const parsed = JSON.parse(usersRaw);
+                users = Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                users = [];
+            }
+        }
+
+        if (recordsRaw) {
+            try {
+                const parsed = JSON.parse(recordsRaw);
+                records = Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                records = [];
+            }
+        }
+
+        return normalizeStorePayload({
+            [USERS_KEY]: users,
+            [SESSION_KEY]: typeof sessionRaw === 'string' ? sessionRaw : '',
+            [RECORDS_KEY]: records,
+            [SIDEBAR_COLLAPSED_KEY]: sidebarRaw === '1' ? '1' : '0'
+        });
+    } catch (error) {
+        console.warn('Failed to read legacy localStorage data:', error);
+        return null;
     }
+}
+
+function isStoreDataEffectivelyEmpty(payload) {
+    if (!payload || typeof payload !== 'object') return true;
+    const users = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
+    const records = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
+    const session = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY].trim() : '';
+    const sidebar = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
+    return users.length === 0 && records.length === 0 && !session && sidebar === '0';
+}
+
+async function migrateLegacyLocalStorageToFileStoreIfNeeded() {
+    if (!isStoreDataEffectivelyEmpty(storeData)) return;
+
+    const legacyData = readLegacyStoreFromLocalStorage();
+    if (!legacyData || isStoreDataEffectivelyEmpty(legacyData)) return;
+
+    storeData = legacyData;
+    await persistStoreToFile();
+    console.log('Migrated legacy localStorage data to file store.');
+}
+
+async function loadStoreFromFile() {
+    try {
+        const response = await fetch(STORE_API_ENDPOINT, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        storeData = normalizeStorePayload(payload);
+    } catch (error) {
+        console.warn('Failed to load store file:', error);
+        storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
+    }
+    storeLoaded = true;
+}
+
+async function persistStoreToFile() {
+    if (!storeLoaded) return;
+    try {
+        await fetch(STORE_API_ENDPOINT, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(storeData)
+        });
+    } catch (error) {
+        console.warn('Failed to persist store file:', error);
+    }
+}
+
+function scheduleStorePersist() {
+    if (!storeLoaded) return;
+    if (storePersistTimer) clearTimeout(storePersistTimer);
+    storePersistTimer = setTimeout(() => {
+        persistStoreToFile();
+    }, 80);
+}
+
+function getUsers() {
+    const users = storeData[USERS_KEY];
+    return Array.isArray(users) ? users : [];
 }
 
 function saveUsers(users) {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    storeData[USERS_KEY] = Array.isArray(users) ? users : [];
+    scheduleStorePersist();
 }
 
 function getRecords() {
-    try {
-        const records = JSON.parse(localStorage.getItem(RECORDS_KEY) || '[]');
-        return Array.isArray(records) ? records : [];
-    } catch {
-        return [];
-    }
+    const records = storeData[RECORDS_KEY];
+    return Array.isArray(records) ? records : [];
 }
 
 function saveRecords(records) {
-    localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+    storeData[RECORDS_KEY] = Array.isArray(records) ? records : [];
+    scheduleStorePersist();
 }
 
 function ensureDefaultAdmin() {
@@ -132,13 +247,14 @@ function ensureDefaultAdmin() {
 }
 
 function getSessionUser() {
-    const userId = localStorage.getItem(SESSION_KEY);
+    const userId = storeData[SESSION_KEY];
     if (!userId) return null;
     return getUsers().find((u) => u.id === userId) || null;
 }
 
 function clearSession() {
-    localStorage.setItem(SESSION_KEY, '');
+    storeData[SESSION_KEY] = '';
+    scheduleStorePersist();
 }
 
 function countAdmins(users) {
@@ -632,7 +748,9 @@ async function uploadNohinshoFolder(files) {
     renderNohinshoRecords();
 }
 
-function boot() {
+async function boot() {
+    await loadStoreFromFile();
+    await migrateLegacyLocalStorageToFileStoreIfNeeded();
     ensureDefaultAdmin();
     const sessionUser = getSessionUser();
 
@@ -691,5 +809,9 @@ nohinshoFolderInput.addEventListener('change', async (e) => {
 btnNohinshoSave.addEventListener('click', saveSelectedNohinshoRecord);
 btnNohinshoDelete.addEventListener('click', deleteSelectedNohinshoRecord);
 btnNohinshoApplyUpload.addEventListener('click', () => nohinshoFileInput.click());
+
+window.addEventListener('beforeunload', () => {
+    persistStoreToFile();
+});
 
 boot();
