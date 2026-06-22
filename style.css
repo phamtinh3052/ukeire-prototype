@@ -61,6 +61,17 @@ body {
     transition: width 0.2s ease, min-width 0.2s ease, padding 0.2s ease;
 }
 
+.sidebar-footer {
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid #ececec;
+}
+
+.sidebar-footer .btn-header-logout {
+    width: 100%;
+    justify-content: center;
+}
+
 .sidebar-title {
     font-size: 0.75em;
     font-weight: bold;
@@ -100,6 +111,49 @@ body {
 }
 
 .main-content h2 { margin: 0; font-size: 1.02em; color: #333; }
+
+.canvas-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    margin: 0 16px 0 16px;
+    border: 1px solid #dfe4ea;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.canvas-toolbar label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82em;
+    padding: 0 2px;
+}
+
+.canvas-toolbar input[type="color"] {
+    width: 36px;
+    min-width: 36px;
+    padding: 2px;
+    height: 30px;
+}
+
+.canvas-toolbar input[type="range"] {
+    width: 120px;
+}
+
+.canvas-toolbar #zoom-percent {
+    min-width: 56px;
+}
+
+.canvas-toolbar #crop-actions {
+    display: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
 
 .header-right {
     display: flex;
@@ -312,6 +366,26 @@ button:disabled {
     cursor: not-allowed;
 }
 
+.btn-primary {
+    background: #2563eb;
+    color: #fff;
+    border: 1px solid #2563eb;
+}
+
+.btn-primary:hover {
+    background: #1d4ed8;
+}
+
+.btn-secondary {
+    background: #fff;
+    color: #333;
+    border: 1px solid #ccc;
+}
+
+.btn-secondary:hover {
+    background: #f7f7f7;
+}
+
 .btn-danger,
 .btn-rotate,
 .btn-zoom,
@@ -328,6 +402,16 @@ button:disabled {
 .btn-pan:hover,
 .btn-crop:hover {
     background: #f7f7f7;
+}
+
+.btn-danger {
+    background: #dc2626;
+    color: #fff;
+    border: 1px solid #dc2626;
+}
+
+.btn-danger:hover {
+    background: #b91c1c;
 }
 
 .sidebar label {
@@ -348,6 +432,222 @@ button:disabled {
     overflow: auto;
 }
 
+.admin-shell {
+    display: flex;
+    height: 100vh;
+    background: #f0f2f5;
+}
+
+.admin-sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: #fff;
+    border-right: 1px solid #e8e8e8;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    gap: 8px;
+    overflow-y: auto;
+}
+
+.admin-sidebar-header h1 {
+    margin: 0 0 4px;
+    font-size: 1.1em;
+}
+
+.admin-nav-button {
+    width: 100%;
+    justify-content: flex-start;
+}
+
+.admin-nav-button.active {
+    background: #333;
+    color: #fff;
+    border-color: #333;
+}
+
+.admin-main {
+    flex: 1;
+    min-width: 0;
+    overflow: auto;
+    padding: 16px;
+}
+
+.admin-panel {
+    display: none;
+}
+
+.admin-panel.active {
+    display: block;
+}
+
+.admin-card {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.admin-records-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.admin-records-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.admin-records-toolbar label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82em;
+}
+
+.admin-records-toolbar input[type="date"],
+.admin-records-toolbar input[type="search"],
+.admin-records-toolbar select {
+    width: auto;
+    min-width: 140px;
+}
+
+.admin-records-grid {
+    display: grid;
+    grid-template-columns: 0.85fr 2.15fr;
+    gap: 12px;
+    min-height: 0;
+}
+
+.admin-records-list-wrap,
+.admin-record-detail-wrap {
+    min-width: 0;
+}
+
+.admin-records-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: calc(100vh - 270px);
+    overflow: auto;
+}
+
+.admin-record-card {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid #d1d5db;
+    background: #fafafa;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.admin-record-card .admin-status-badge {
+    flex: 0 0 auto;
+}
+
+.admin-record-card.active {
+    outline: 2px solid #333;
+    background: #f6f6f6;
+}
+
+.admin-record-card-title {
+    flex: 1 1 auto;
+    font-weight: 700;
+    color: #222;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-record-card-meta {
+    flex: 0 0 auto;
+    font-size: 0.8em;
+    color: #666;
+    white-space: nowrap;
+}
+
+.admin-status-badge {
+    display: inline-flex;
+    align-self: flex-start;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 700;
+}
+
+.admin-status-badge.pending {
+    background: #fff4f4;
+    color: #b42318;
+    border: 1px solid #f2b6b6;
+}
+
+.admin-status-badge.done {
+    background: #edf9ed;
+    color: #276749;
+    border: 1px solid #9ed29e;
+}
+
+.admin-record-preview {
+    width: 100%;
+    min-height: 360px;
+    border: 1px dashed #d1d5db;
+    border-radius: 8px;
+    background: #fbfbfb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-bottom: 10px;
+    position: relative;
+}
+
+.admin-record-preview img {
+    display: none;
+    max-width: 100%;
+    max-height: 640px;
+    object-fit: contain;
+}
+
+.admin-detail-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.admin-detail-form .tool-group-row button {
+    width: 100%;
+}
+
+.admin-detail-form input,
+.admin-detail-form select {
+    width: 100%;
+}
+
+.sidebar-footer {
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid #ececec;
+}
+
+.sidebar-footer button {
+    width: 100%;
+    justify-content: center;
+}
+
 .admin-page {
     min-height: 100vh;
     display: flex;
@@ -357,7 +657,8 @@ button:disabled {
 }
 
 .admin-card {
-    width: min(1100px, 100%);
+    width: 100%;
+    max-width: none;
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
@@ -381,6 +682,32 @@ button:disabled {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 8px;
     margin-bottom: 8px;
+}
+
+.admin-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.82em;
+    color: #555;
+}
+
+.admin-field span {
+    font-weight: 600;
+}
+
+.admin-table-header {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr 0.7fr 1fr 0.6fr 0.6fr;
+    gap: 6px;
+    align-items: center;
+    margin: 8px 0 6px;
+    padding: 0 8px;
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .users-table {
@@ -466,11 +793,25 @@ button:disabled {
     .record-section-grid { grid-template-columns: 1fr; }
     .admin-create-grid { grid-template-columns: 1fr; }
     .user-row { grid-template-columns: 1fr; }
+    .admin-records-grid { grid-template-columns: 1fr; }
+    .admin-records-list { max-height: 280px; }
+    .admin-record-card { flex-direction: column; align-items: flex-start; }
+    .admin-record-card-title,
+    .admin-record-card-meta { white-space: normal; }
 }
 
 @media (max-width: 768px) {
     .main-content { padding: 12px; }
     .main-content h2 { margin: 0 0 8px 44px; }
+    .canvas-toolbar {
+        margin: 0 0 8px;
+        padding: 8px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    .canvas-toolbar #crop-actions {
+        flex-shrink: 0;
+    }
     #workspace { margin-left: 0; }
     .sidebar-toggle { display: block; }
 
@@ -485,6 +826,23 @@ button:disabled {
     }
 
     .sidebar.open { transform: translateX(0); }
+
+    .admin-shell { flex-direction: column; }
+    .admin-sidebar {
+        width: 100%;
+        min-width: 0;
+        border-right: none;
+        border-bottom: 1px solid #e8e8e8;
+    }
+    .admin-main { padding: 12px; }
+    .admin-records-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .admin-records-toolbar label { width: 100%; }
+    .admin-records-toolbar input[type="date"],
+    .admin-records-toolbar input[type="search"],
+    .admin-records-toolbar select { min-width: 0; width: 100%; }
 }
 
 /* ── Upload toast notification ───────────────────────── */

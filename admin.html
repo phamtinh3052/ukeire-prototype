@@ -15,37 +15,121 @@
     <meta name="apple-mobile-web-app-title" content="納品書">
     <link rel="apple-touch-icon" href="icon.svg">
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <main class="admin-page">
-        <section class="admin-card">
-            <div class="admin-header">
+    <div class="admin-shell">
+        <aside class="admin-sidebar">
+            <div class="admin-sidebar-header">
                 <h1>管理ページ</h1>
-                <div class="tool-group-row">
-                    <button id="btn-back">アプリへ戻る</button>
-                    <button id="btn-logout-admin" class="btn-danger">ログアウト</button>
+                <p id="admin-status" class="muted"></p>
+            </div>
+
+            <button id="admin-tab-users" class="admin-nav-button active" type="button">ユーザー管理</button>
+            <button id="admin-tab-nohinsho" class="admin-nav-button" type="button">納品書管理</button>
+
+            <div class="sidebar-footer">
+                <button id="btn-back" class="btn-secondary" type="button">アプリへ戻る</button>
+                <button id="btn-logout-admin" class="btn-danger" type="button">ログアウト</button>
+            </div>
+        </aside>
+
+        <main class="admin-main">
+            <section id="admin-panel-users" class="admin-panel active">
+                <div class="admin-card">
+                    <div class="sidebar-title">ユーザー作成</div>
+                    <div class="admin-create-grid">
+                        <label class="admin-field">
+                            <span>ユーザー名</span>
+                            <input id="new-username" type="text" placeholder="新規ユーザー名">
+                        </label>
+                        <label class="admin-field">
+                            <span>パスワード</span>
+                            <input id="new-password" type="password" placeholder="初期パスワード">
+                        </label>
+                        <label class="admin-field">
+                            <span>権限</span>
+                            <select id="new-role">
+                                <option value="user">user</option>
+                                <option value="admin">admin</option>
+                            </select>
+                        </label>
+                        <label class="admin-field">
+                            <span>ブラシ色</span>
+                            <input id="new-brush-color" type="color" value="#ff0000">
+                        </label>
+                        <button id="btn-create-user" class="btn-primary">ユーザー追加</button>
+                    </div>
+
+                    <div class="sidebar-title">ユーザー一覧</div>
+                    <div class="admin-table-header">
+                        <div>ユーザー名</div>
+                        <div>権限</div>
+                        <div>ブラシ色</div>
+                        <div>パスワード</div>
+                        <div>保存</div>
+                        <div>削除</div>
+                    </div>
+                    <div id="users-table" class="users-table"></div>
                 </div>
-            </div>
+            </section>
 
-            <p id="admin-status" class="muted"></p>
+            <section id="admin-panel-nohinsho" class="admin-panel">
+                <div class="admin-card admin-records-layout">
+                    <div class="admin-records-toolbar">
+                        <label>日付 <input id="nohinsho-date" type="date"></label>
+                        <label>検索 <input id="nohinsho-search" type="search" placeholder="ファイル名で検索"></label>
+                        <label>並び順
+                            <select id="nohinsho-sort">
+                                <option value="desc">新しい順</option>
+                                <option value="asc">古い順</option>
+                            </select>
+                        </label>
+                        <button id="btn-nohinsho-today" class="btn-secondary" type="button">今日</button>
+                        <button id="btn-nohinsho-upload" class="btn-primary" type="button">ファイルをアップロード</button>
+                        <button id="btn-nohinsho-upload-folder" class="btn-primary" type="button">フォルダをアップロード</button>
+                    </div>
 
-            <div class="sidebar-title">ユーザー作成</div>
-            <div class="admin-create-grid">
-                <input id="new-username" type="text" placeholder="新規ユーザー名">
-                <input id="new-password" type="password" placeholder="初期パスワード">
-                <select id="new-role">
-                    <option value="user">user</option>
-                    <option value="admin">admin</option>
-                </select>
-                <label>ブラシ色 <input id="new-brush-color" type="color" value="#ff0000"></label>
-                <button id="btn-create-user">ユーザー追加</button>
-            </div>
+                    <div class="admin-records-grid">
+                        <div class="admin-records-list-wrap">
+                            <div class="sidebar-title">納品書一覧</div>
+                            <div id="nohinsho-records-list" class="admin-records-list"></div>
+                        </div>
 
-            <div class="sidebar-title">ユーザー一覧</div>
-            <div id="users-table" class="users-table"></div>
-        </section>
-    </main>
+                        <div class="admin-record-detail-wrap">
+                            <div class="sidebar-title">納品書画像</div>
+                            <div class="admin-record-preview">
+                                <img id="nohinsho-preview" alt="納品書プレビュー" />
+                                <div id="nohinsho-preview-empty" class="muted">納品書を選択してください。</div>
+                            </div>
+                            <div class="sidebar-title">詳細</div>
+                            <div class="admin-detail-form">
+                                <input id="nohinsho-name" type="text" placeholder="納品書名">
+                                <input id="nohinsho-date-edit" type="date">
+                                <select id="nohinsho-status">
+                                    <option value="not_checked">未チェック</option>
+                                    <option value="done">確認完了</option>
+                                </select>
+                                <input id="nohinsho-url" type="text" placeholder="Cloudinary URL / public_id" readonly>
+                                <div class="tool-group-row">
+                                    <button id="btn-nohinsho-save" class="btn-primary" type="button"><span>保存</span></button>
+                                    <button id="btn-nohinsho-delete" class="btn-danger" type="button"><span>削除</span></button>
+                                </div>
+                                <div class="tool-group-row">
+                                    <button id="btn-nohinsho-apply-upload" class="btn-secondary" type="button">再アップロード</button>
+                                </div>
+                                <input id="nohinsho-file-input" type="file" accept="image/*,application/pdf" style="display:none;">
+                                <input id="nohinsho-folder-input" type="file" accept="image/*,application/pdf" webkitdirectory directory multiple style="display:none;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
 
     <script src="admin.js"></script>
 </body>
