@@ -1,15 +1,13 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-// Cloudinary unsigned upload settings
-// File-backed store (data/store.json via /api/store) lưu users/session/records/ui state
-const CLOUDINARY_CLOUD_NAME = 'dlnvnf9h3';
-const CLOUDINARY_UPLOAD_PRESET = 'ukeire-prototype';
-
-const USERS_KEY = 'ukeire_users_v1';
-const SESSION_KEY = 'ukeire_session_v1';
+const AUTH_TOKEN_KEY = 'ukeire_auth_token_v2';
 const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
 const SIDEBAR_COLLAPSED_KEY = 'ukeire_sidebar_collapsed_v1';
-const STORE_API_ENDPOINT = '/api/store';
+const API_AUTH_LOGIN = '/api/auth/login';
+const API_AUTH_LOGOUT = '/api/auth/logout';
+const API_AUTH_ME = '/api/auth/me';
+const API_RECORDS = '/api/records';
+const API_UPLOADS = '/api/uploads';
 
 const authScreen = document.getElementById('auth-screen');
 const appRoot = document.getElementById('app-root');
@@ -95,15 +93,17 @@ let sidebarGestureStartValue = 0;
 let sidebarGestureCurrentValue = 0;
 
 const DEFAULT_STORE_DATA = {
-    [USERS_KEY]: [],
-    [SESSION_KEY]: '',
-    [RECORDS_KEY]: [],
-    [SIDEBAR_COLLAPSED_KEY]: '0'
+    [RECORDS_KEY]: []
 };
 
 let storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-let storeLoaded = false;
-let storePersistTimer = null;
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+let currentSessionUser = null;
+let recordsSyncTimer = null;
+let recordsSyncRunning = false;
+const dirtyRecordIds = new Set();
+const syncedLinesHashByRecordId = new Map();
+const localRecordHashById = new Map();
 
 const DESKTOP_SIDEBAR_EXPANDED_WIDTH = 240;
 const DESKTOP_SIDEBAR_COLLAPSED_WIDTH = 68;
@@ -114,18 +114,6 @@ function todayDateString() {
     const m = `${now.getMonth() + 1}`.padStart(2, '0');
     const d = `${now.getDate()}`.padStart(2, '0');
     return `${y}-${m}-${d}`;
-}
-
-function buildCloudinaryFolderByDate(dateStr) {
-    const fallback = todayDateString();
-    const target = (dateStr || fallback).trim();
-    const match = target.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) {
-        const [fy, fm, fd] = fallback.split('-');
-        return `nouhinsho/${fy}_${fm}_${fd}`;
-    }
-    const [, y, m, d] = match;
-    return `nouhinsho/${y}_${m}_${d}`;
 }
 
 function showUploadToast(message, type = 'info', autoDismiss = 0) {
@@ -144,137 +132,150 @@ function hideUploadToast() {
     uploadToast.classList.add('hidden');
 }
 
-function normalizeStorePayload(payload) {
-    const normalized = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-    if (!payload || typeof payload !== 'object') return normalized;
-
-    normalized[USERS_KEY] = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
-    normalized[SESSION_KEY] = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY] : '';
-    normalized[RECORDS_KEY] = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
-    normalized[SIDEBAR_COLLAPSED_KEY] = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
-    return normalized;
-}
-
-function readLegacyStoreFromLocalStorage() {
-    try {
-        const usersRaw = localStorage.getItem(USERS_KEY);
-        const sessionRaw = localStorage.getItem(SESSION_KEY);
-        const recordsRaw = localStorage.getItem(RECORDS_KEY);
-        const sidebarRaw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
-
-        const hasLegacyData = usersRaw !== null || sessionRaw !== null || recordsRaw !== null || sidebarRaw !== null;
-        if (!hasLegacyData) return null;
-
-        let users = [];
-        let records = [];
-
-        if (usersRaw) {
-            try {
-                const parsed = JSON.parse(usersRaw);
-                users = Array.isArray(parsed) ? parsed : [];
-            } catch (_) {
-                users = [];
-            }
-        }
-
-        if (recordsRaw) {
-            try {
-                const parsed = JSON.parse(recordsRaw);
-                records = Array.isArray(parsed) ? parsed : [];
-            } catch (_) {
-                records = [];
-            }
-        }
-
-        return normalizeStorePayload({
-            [USERS_KEY]: users,
-            [SESSION_KEY]: typeof sessionRaw === 'string' ? sessionRaw : '',
-            [RECORDS_KEY]: records,
-            [SIDEBAR_COLLAPSED_KEY]: sidebarRaw === '1' ? '1' : '0'
-        });
-    } catch (error) {
-        console.warn('Failed to read legacy localStorage data:', error);
-        return null;
+async function apiRequest(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const response = await fetch(url, { ...options, headers });
+    const text = await response.text();
+    const payload = text ? (() => { try { return JSON.parse(text); } catch { return {}; } })() : {};
+    if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
     }
+    return payload;
 }
 
-function isStoreDataEffectivelyEmpty(payload) {
-    if (!payload || typeof payload !== 'object') return true;
-    const users = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
-    const records = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
-    const session = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY].trim() : '';
-    const sidebar = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
-    return users.length === 0 && records.length === 0 && !session && sidebar === '0';
+function setAuthToken(token) {
+    authToken = token || '';
+    if (authToken) localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
-async function migrateLegacyLocalStorageToFileStoreIfNeeded() {
-    if (!isStoreDataEffectivelyEmpty(storeData)) return;
-
-    const legacyData = readLegacyStoreFromLocalStorage();
-    if (!legacyData || isStoreDataEffectivelyEmpty(legacyData)) return;
-
-    storeData = legacyData;
-    await persistStoreToFile();
-    console.log('Migrated legacy localStorage data to file store.');
+function buildRecordPayload(record) {
+    return {
+        name: record.name || '無題',
+        date: record.date || todayDateString(),
+        status: normalizeRecordStatus(record),
+        rotation: normalizeRotationDeg(record.rotation || 0),
+        sourceUrl: record.sourceUrl || '',
+        sourceStoragePath: record.sourceStoragePath || '',
+        sourceFileType: record.sourceFileType || '',
+        uploadStatus: getEffectiveUploadStatus(record),
+        isDeleted: !!record.isDeleted,
+        deletedAt: record.deletedAt || null,
+        deletedStoragePath: record.deletedStoragePath || ''
+    };
 }
 
-async function loadStoreFromFile() {
-    try {
-        const response = await fetch(STORE_API_ENDPOINT, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        storeData = normalizeStorePayload(payload);
-    } catch (error) {
-        console.warn('Failed to load store file:', error);
-        storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-    }
-    storeLoaded = true;
+function getLinesHistoryHash(record) {
+    return JSON.stringify(Array.isArray(record?.linesHistory) ? record.linesHistory : []);
 }
 
-async function persistStoreToFile() {
-    if (!storeLoaded) return;
-    try {
-        await fetch(STORE_API_ENDPOINT, {
-            method: 'PUT',
+function getLocalRecordHash(record) {
+    return JSON.stringify({
+        payload: buildRecordPayload(record),
+        lines: Array.isArray(record?.linesHistory) ? record.linesHistory : []
+    });
+}
+
+function cacheRecordHashes(records) {
+    localRecordHashById.clear();
+    (Array.isArray(records) ? records : []).forEach((r) => {
+        if (r?.id) localRecordHashById.set(r.id, getLocalRecordHash(r));
+    });
+}
+
+async function uploadImageDataUrl(dataUrl, fileName, dateStr) {
+    return apiRequest(API_UPLOADS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            dataUrl,
+            fileName,
+            date: dateStr || todayDateString()
+        })
+    });
+}
+
+function isServerRecordId(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(`${id || ''}`);
+}
+
+async function syncRecordById(recordId) {
+    const records = storeData[RECORDS_KEY] || [];
+    const idx = records.findIndex((r) => r.id === recordId);
+    if (idx < 0) return;
+    const record = records[idx];
+
+    if (!isServerRecordId(record.id)) {
+        const created = await apiRequest(API_RECORDS, {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(storeData)
+            body: JSON.stringify(buildRecordPayload(record))
         });
-    } catch (error) {
-        console.warn('Failed to persist store file:', error);
+        const newId = created?.record?.id;
+        if (newId) {
+            record.id = newId;
+            records[idx] = record;
+            if (currentRecordId === recordId) currentRecordId = newId;
+            const oldHash = localRecordHashById.get(recordId);
+            if (oldHash !== undefined) {
+                localRecordHashById.delete(recordId);
+                localRecordHashById.set(newId, oldHash);
+            }
+            dirtyRecordIds.delete(recordId);
+            dirtyRecordIds.add(newId);
+        }
+        if (newId && Array.isArray(record.linesHistory)) {
+            await apiRequest(`${API_RECORDS}/${newId}/annotations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ linesHistory: record.linesHistory, comment: 'sync-create' })
+            });
+            syncedLinesHashByRecordId.set(newId, getLinesHistoryHash(record));
+        }
+        return;
+    }
+
+    await apiRequest(`${API_RECORDS}/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildRecordPayload(record))
+    });
+
+    if (Array.isArray(record.linesHistory)) {
+        const currentHash = getLinesHistoryHash(record);
+        const previousHash = syncedLinesHashByRecordId.get(record.id);
+        if (currentHash === previousHash) return;
+        await apiRequest(`${API_RECORDS}/${record.id}/annotations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linesHistory: record.linesHistory, comment: 'sync-update' })
+        });
+        syncedLinesHashByRecordId.set(record.id, currentHash);
     }
 }
 
-function scheduleStorePersist() {
-    if (!storeLoaded) return;
-    if (storePersistTimer) clearTimeout(storePersistTimer);
-    storePersistTimer = setTimeout(() => {
-        persistStoreToFile();
-    }, 80);
-}
-
-function getUsers() {
-    const users = storeData[USERS_KEY];
-    return Array.isArray(users) ? users : [];
-}
-
-function saveUsers(users) {
-    storeData[USERS_KEY] = Array.isArray(users) ? users : [];
-    scheduleStorePersist();
-}
-
-function ensureDefaultAdmin() {
-    const users = getUsers();
-    if (users.length > 0) return;
-
-    saveUsers([
-        {
-            id: `u-${Date.now()}`,
-            username: 'admin',
-            password: 'admin123',
-            role: 'admin',
-            brushColor: '#ff0000'
+async function flushDirtyRecords() {
+    if (recordsSyncRunning || !authToken) return;
+    recordsSyncRunning = true;
+    try {
+        while (dirtyRecordIds.size > 0) {
+            const [id] = Array.from(dirtyRecordIds);
+            dirtyRecordIds.delete(id);
+            await syncRecordById(id);
         }
-    ]);
+    } catch (error) {
+        console.warn('Failed to sync record changes:', error);
+    } finally {
+        recordsSyncRunning = false;
+    }
+}
+
+function scheduleRecordsSync() {
+    if (recordsSyncTimer) clearTimeout(recordsSyncTimer);
+    recordsSyncTimer = setTimeout(() => {
+        flushDirtyRecords();
+    }, 150);
 }
 
 function getRecords() {
@@ -283,36 +284,30 @@ function getRecords() {
 }
 
 function saveRecords(records) {
-    storeData[RECORDS_KEY] = Array.isArray(records) ? records : [];
-    scheduleStorePersist();
-}
+    const next = Array.isArray(records) ? records : [];
+    const liveIds = new Set();
 
-function readCloudinaryConfig() {
-    // Lấy từ constants (hardcoded)
-    return { cloudName: CLOUDINARY_CLOUD_NAME, uploadPreset: CLOUDINARY_UPLOAD_PRESET };
-}
+    next.forEach((r) => {
+        if (!r?.id) return;
+        liveIds.add(r.id);
+        const currentHash = getLocalRecordHash(r);
+        const previousHash = localRecordHashById.get(r.id);
+        if (currentHash !== previousHash) {
+            dirtyRecordIds.add(r.id);
+            localRecordHashById.set(r.id, currentHash);
+        }
+    });
 
-function ensureCloudinaryConfig() {
-    // Không cần prompt, lấy từ constants luôn
-    return readCloudinaryConfig();
-}
+    Array.from(localRecordHashById.keys()).forEach((id) => {
+        if (!liveIds.has(id)) localRecordHashById.delete(id);
+    });
 
-function buildCloudinaryAssetUrl(publicId) {
-    const config = ensureCloudinaryConfig();
-    if (!config || !publicId) return '';
-    const cleanId = `${publicId}`.replace(/^\/+/, '');
-    return `https://res.cloudinary.com/${config.cloudName}/image/upload/${cleanId}`;
-}
-
-function setSession(userId) {
-    storeData[SESSION_KEY] = userId || '';
-    scheduleStorePersist();
+    storeData[RECORDS_KEY] = next;
+    scheduleRecordsSync();
 }
 
 function getSessionUser() {
-    const userId = storeData[SESSION_KEY];
-    if (!userId) return null;
-    return getUsers().find((u) => u.id === userId) || null;
+    return currentSessionUser;
 }
 
 function isMobileView() {
@@ -508,14 +503,28 @@ function updateSidebarCollapseIcon() {
 function setSidebarCollapsed(collapsed) {
     const nextCollapsed = !!collapsed && !isMobileView();
     appRoot.classList.toggle('sidebar-collapsed', nextCollapsed);
-    storeData[SIDEBAR_COLLAPSED_KEY] = nextCollapsed ? '1' : '0';
-    scheduleStorePersist();
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, nextCollapsed ? '1' : '0');
     updateSidebarCollapseIcon();
 }
 
 function restoreSidebarCollapsed() {
-    const savedCollapsed = storeData[SIDEBAR_COLLAPSED_KEY] === '1';
+    const savedCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
     setSidebarCollapsed(savedCollapsed);
+}
+
+function pickDefaultFilterDate(records) {
+    const today = todayDateString();
+    const list = Array.isArray(records) ? records : [];
+    const active = list.filter((r) => !r?.isDeleted && typeof r?.date === 'string' && r.date);
+    if (active.length === 0) return today;
+
+    if (active.some((r) => r.date === today)) return today;
+
+    const sorted = active
+        .map((r) => r.date)
+        .sort((a, b) => (a < b ? 1 : -1));
+
+    return sorted[0] || today;
 }
 
 function showAppForUser(user) {
@@ -529,35 +538,56 @@ function showAppForUser(user) {
     colorPicker.disabled = true;
     btnOpenAdmin.style.display = user.role === 'admin' ? 'block' : 'none';
 
-    filterDateInput.value = todayDateString();
+    filterDateInput.value = pickDefaultFilterDate(getRecords());
     renderRecordsByDate();
     updateToolUI();
 }
 
-function logout() {
-    setSession('');
+async function logout() {
+    try {
+        if (authToken) {
+            await apiRequest(API_AUTH_LOGOUT, { method: 'POST' });
+        }
+    } catch (error) {
+        console.warn('Logout failed:', error);
+    }
+    setAuthToken('');
+    currentSessionUser = null;
     currentUser = null;
     currentRecordId = null;
     rawSourceData = null;
+    storeData[RECORDS_KEY] = [];
     authScreen.classList.remove('hidden');
     appRoot.classList.add('hidden');
     loginPassword.value = '';
     loginError.textContent = '';
 }
 
-function handleLogin() {
+async function handleLogin() {
     const username = loginUsername.value.trim();
     const password = loginPassword.value;
-    const user = getUsers().find((u) => u.username === username && u.password === password);
-
-    if (!user) {
-        loginError.textContent = 'ユーザー名またはパスワードが違います。';
+    if (!username || !password) {
+        loginError.textContent = 'ユーザー名とパスワードを入力してください。';
         return;
     }
 
-    loginError.textContent = '';
-    setSession(user.id);
-    showAppForUser(user);
+    try {
+        const result = await apiRequest(API_AUTH_LOGIN, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        setAuthToken(result.token || '');
+        currentSessionUser = result.user || null;
+        loginError.textContent = '';
+
+        const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
+        storeData[RECORDS_KEY] = Array.isArray(recordsPayload?.records) ? recordsPayload.records : [];
+        cacheRecordHashes(storeData[RECORDS_KEY]);
+        showAppForUser(currentSessionUser);
+    } catch (error) {
+        loginError.textContent = 'ユーザー名またはパスワードが違います。';
+    }
 }
 
 function formatRecordDate(dateStr) {
@@ -578,6 +608,14 @@ function normalizeRecordStatus(record) {
         return record.status;
     }
     return record.checked ? 'done' : 'not_checked';
+}
+
+function getEffectiveUploadStatus(record) {
+    if (!record) return 'done';
+    if (record.isDeleted) return 'deleted';
+    if (record.sourceUrl || record.bgDataUrl) return 'done';
+    if (record.uploadStatus === 'failed') return 'failed';
+    return record.uploadStatus || 'uploading';
 }
 
 function getRecordStatusLabel(status) {
@@ -610,11 +648,12 @@ function buildRecordSection(title, records) {
     } else {
         records.forEach((record) => {
             const status = normalizeRecordStatus(record);
+            const uploadStatus = getEffectiveUploadStatus(record);
             const item = document.createElement('div');
             item.className = `record-item ${getRecordStatusClass(status)} ${record.id === currentRecordId ? 'active' : ''}`;
-            const uploadBadge = record.uploadStatus === 'uploading'
+            const uploadBadge = uploadStatus === 'uploading'
                 ? '<div class="meta"><span class="upload-badge badge-uploading">\u2601 アップロード中</span></div>'
-                : record.uploadStatus === 'failed'
+                : uploadStatus === 'failed'
                 ? '<div class="meta"><span class="upload-badge badge-failed">&#9888; アップロード失敗</span></div>'
                 : '';
             item.innerHTML = `
@@ -707,16 +746,6 @@ function resetWorkspaceForNoRecord(message = '先に納品書を選択または�
     updateToolUI();
 }
 
-function buildDeletedStoragePath(record) {
-    const baseFolder = `${buildCloudinaryFolderByDate(record?.date || todayDateString())}/deleted`;
-    const sourcePath = `${record?.sourceStoragePath || ''}`.trim();
-
-    if (sourcePath.includes('/deleted/')) return sourcePath;
-
-    const fileName = sourcePath.split('/').pop() || `${record?.id || `r-${Date.now()}`}`;
-    return `${baseFolder}/${fileName}`;
-}
-
 function deleteCurrentRecord() {
     if (!currentRecordId) {
         alert('削除する納品書が選択されていません。');
@@ -737,13 +766,10 @@ function deleteCurrentRecord() {
     const idx = records.findIndex((r) => r.id === currentRecordId);
     if (idx < 0) return;
 
-    const deletedPath = buildDeletedStoragePath(record);
     const updatedRecord = {
         ...record,
         isDeleted: true,
         deletedAt: new Date().toISOString(),
-        deletedStoragePath: deletedPath,
-        sourceStoragePath: deletedPath,
         uploadStatus: 'deleted',
         updatedAt: new Date().toISOString(),
         editorUserId: currentUser?.id || record.editorUserId
@@ -751,9 +777,9 @@ function deleteCurrentRecord() {
 
     records[idx] = updatedRecord;
     saveRecords(records);
-    resetWorkspaceForNoRecord('納品書をdeletedフォルダに移動しました。');
+    resetWorkspaceForNoRecord('納品書を削除一覧へ移動しました。');
     renderRecordsByDate();
-    showUploadToast('<i class="fa-solid fa-box-archive"></i> 削除せずに deleted フォルダへ移動しました。', 'success', 4000);
+    showUploadToast('<i class="fa-solid fa-box-archive"></i> 削除一覧へ移動しました。', 'success', 4000);
 }
 
 function cloneLines(lines) {
@@ -809,36 +835,6 @@ function parseFileToDataUrl(file, done) {
     done(null, new Error('画像またはPDFファイルのみ対応しています。'));
 }
 
-async function uploadFileToCloudinary(file, recordId, dateStr) {
-    const config = ensureCloudinaryConfig();
-    if (!config) return null;
-
-    const endpoint = `https://api.cloudinary.com/v1_1/${config.cloudName}/image/upload`;
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', config.uploadPreset);
-    formData.append('folder', buildCloudinaryFolderByDate(dateStr || filterDateInput.value || todayDateString()));
-
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        body: formData
-    });
-
-    if (!response.ok) {
-        const text = await response.text();
-        let detail = text;
-        try { detail = JSON.parse(text)?.error?.message || text; } catch {}
-        throw new Error(`Cloudinary upload failed (${response.status}): ${detail}`);
-    }
-
-    const result = await response.json();
-    return {
-        storagePath: result.public_id || '',
-        downloadURL: result.secure_url || '',
-        deleteToken: result.delete_token || ''
-    };
-}
-
 function isSupportedUploadFile(file) {
     if (!file) return false;
     const type = `${file.type || ''}`.toLowerCase();
@@ -868,8 +864,6 @@ function createRecordFromUpload(file, options = {}) {
         checked: false,
         rotation: 0,
         sourceUrl: '',
-        sourceStoragePath: '',
-        sourceDeleteToken: '',
         sourceFileType: file.type || '',
         uploadStatus: 'uploading',
         linesHistory: [],
@@ -881,7 +875,7 @@ function createRecordFromUpload(file, options = {}) {
     saveRecords(records);
     renderRecordsByDate();
 
-    // Display locally from memory (not stored in localStorage), then upload processed image blob.
+    // Display locally and store the rendered image as a data URL.
     return new Promise((resolve) => {
         parseFileToDataUrl(file, (bgDataUrl, parseError) => {
             if (parseError || !bgDataUrl) {
@@ -922,63 +916,29 @@ function createRecordFromUpload(file, options = {}) {
                 localImg.src = bgDataUrl;
             }
 
-            let uploadBlob;
-            try {
-                uploadBlob = dataUrlToBlob(bgDataUrl);
-            } catch (blobError) {
-                const latestRecords = getRecords();
-                const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
-                if (latestIdx >= 0) {
-                    latestRecords[latestIdx].uploadStatus = 'failed';
-                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
-                    saveRecords(latestRecords);
-                    renderRecordsByDate();
-                }
-                if (lockSingleButton) btnUpload.disabled = false;
-                if (showSingleToast) {
-                    showUploadToast(
-                        `<i class="fa-solid fa-circle-exclamation"></i> 画像変換失敗: ${blobError?.message || '不明なエラー'}`,
-                        'error'
-                    );
-                }
-                resolve({ ok: false, recordId: record.id, reason: 'blob-failed' });
-                return;
-            }
-
             if (showSingleToast) {
-                showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> Cloudinaryにアップロード中...', 'info');
+                showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> Supabase Storage にアップロード中...', 'info');
             }
 
-            uploadFileToCloudinary(uploadBlob, record.id, record.date)
-                .then((uploadResult) => {
-                    if (!uploadResult) {
-                        resolve({ ok: false, recordId: record.id, reason: 'upload-empty' });
-                        return;
-                    }
-
+            uploadImageDataUrl(bgDataUrl, file.name, record.date)
+                .then(async (uploadResult) => {
                     const latestRecords = getRecords();
                     const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
-                    if (latestIdx < 0) {
-                        resolve({ ok: false, recordId: record.id, reason: 'record-missing' });
-                        return;
+                    if (latestIdx >= 0) {
+                        latestRecords[latestIdx].sourceUrl = uploadResult.publicUrl || '';
+                        latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath || '';
+                        latestRecords[latestIdx].uploadStatus = 'done';
+                        latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                        saveRecords(latestRecords);
+                        renderRecordsByDate();
                     }
 
-                    latestRecords[latestIdx].sourceUrl = uploadResult.downloadURL;
-                    latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath;
-                    latestRecords[latestIdx].sourceDeleteToken = uploadResult.deleteToken || '';
-                    latestRecords[latestIdx].uploadStatus = 'done';
-                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
-                    saveRecords(latestRecords);
-                    renderRecordsByDate();
-
                     if (showSingleToast) {
-                        showUploadToast('<i class="fa-solid fa-circle-check"></i> Cloudinaryへのアップロード完了', 'success', 4000);
+                        showUploadToast('<i class="fa-solid fa-circle-check"></i> 画像をアップロードしました。', 'success', 4000);
                     }
                     resolve({ ok: true, recordId: record.id });
                 })
                 .catch((error) => {
-                    console.warn('Cloudinary upload failed:', error);
-
                     const latestRecords = getRecords();
                     const latestIdx = latestRecords.findIndex((r) => r.id === record.id);
                     if (latestIdx >= 0) {
@@ -1064,24 +1024,18 @@ function openRecord(recordId) {
     currentRecordId = record.id;
     updateRecordMetaUI(record);
 
-    // Prefer Cloudinary URL; fall back to public_id and then legacy bgDataUrl for old records
     let imageUrl = record.sourceUrl || '';
-    if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('data:')) {
-        imageUrl = buildCloudinaryAssetUrl(imageUrl);
-    }
-    if (!imageUrl && record.sourceStoragePath) {
-        imageUrl = buildCloudinaryAssetUrl(record.sourceStoragePath);
-    }
     if (!imageUrl && record.bgDataUrl) {
         imageUrl = record.bgDataUrl;
     }
+    const uploadStatus = getEffectiveUploadStatus(record);
 
     if (!imageUrl) {
         const dropZone = document.getElementById('drop-zone-text');
         dropZone.style.display = '';
-        dropZone.textContent = record.uploadStatus === 'failed'
-            ? 'アップロード失敗。ファイルを再アップロードしてください。'
-            : '画像をアップロード中... しばらくお待ちください。';
+        dropZone.textContent = uploadStatus === 'failed'
+            ? '画像の保存に失敗しました。再度アップロードしてください。'
+            : '画像を読み込み中です。しばらくお待ちください。';
         canvasWrapper.style.display = 'none';
         rawSourceData = null;
         renderRecordsByDate();
@@ -1139,7 +1093,6 @@ function saveCurrentRecordMetaAndCanvas() {
     record.linesHistory = cloneLines(linesHistory);
     record.updatedAt = new Date().toISOString();
     record.editorUserId = currentUser.id;
-    // Migrate legacy records: remove bgDataUrl blob once sourceUrl is available
     if (record.sourceUrl && record.bgDataUrl) {
         delete record.bgDataUrl;
     }
@@ -1389,38 +1342,30 @@ function applyCrop() {
         setTool('pan');
         autoSaveCurrentRecord();
 
-        // Upload cropped image to Cloudinary and update sourceUrl
         const cropRecordId = currentRecordId;
         if (!cropRecordId) return;
-        const cropRecord = getRecords().find((r) => r.id === cropRecordId);
-        const cropFolderDate = cropRecord?.date || filterDateInput.value || todayDateString();
-        bgCanvas.toBlob((blob) => {
-            if (!blob) return;
-            showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> 切り抜き画像をアップロード中...', 'info');
-            uploadFileToCloudinary(blob, `${cropRecordId}_crop`, cropFolderDate)
-                .then((uploadResult) => {
-                    if (!uploadResult) return;
-                    const latestRecords = getRecords();
-                    const latestIdx = latestRecords.findIndex((r) => r.id === cropRecordId);
-                    if (latestIdx < 0) return;
-                    latestRecords[latestIdx].sourceUrl = uploadResult.downloadURL;
-                    latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath;
-                    latestRecords[latestIdx].sourceDeleteToken = uploadResult.deleteToken || '';
-                    latestRecords[latestIdx].uploadStatus = 'done';
-                    if (latestRecords[latestIdx].bgDataUrl) delete latestRecords[latestIdx].bgDataUrl;
-                    latestRecords[latestIdx].updatedAt = new Date().toISOString();
-                    saveRecords(latestRecords);
-                    renderRecordsByDate();
-                    showUploadToast('<i class="fa-solid fa-circle-check"></i> 切り抜き完了・アップロード済み', 'success', 4000);
-                })
-                .catch((error) => {
-                    console.warn('Crop re-upload failed:', error);
-                    showUploadToast(
-                        `<i class="fa-solid fa-circle-exclamation"></i> アップロード失敗: ${error.message || 'ネットワークエラー'}`,
-                        'error'
-                    );
-                });
-        }, 'image/png');
+        const latestRecords = getRecords();
+        const latestIdx = latestRecords.findIndex((r) => r.id === cropRecordId);
+        if (latestIdx < 0) return;
+        const cropDataUrl = bgCanvas.toDataURL('image/png');
+        showUploadToast('<i class="fa-solid fa-spinner fa-spin"></i> 切り抜き画像をアップロード中...', 'info');
+        uploadImageDataUrl(cropDataUrl, `${latestRecords[latestIdx].name || 'crop'}.png`, latestRecords[latestIdx].date)
+            .then((uploadResult) => {
+                latestRecords[latestIdx].sourceUrl = uploadResult.publicUrl || '';
+                latestRecords[latestIdx].sourceStoragePath = uploadResult.storagePath || '';
+                latestRecords[latestIdx].uploadStatus = 'done';
+                if (latestRecords[latestIdx].bgDataUrl) delete latestRecords[latestIdx].bgDataUrl;
+                latestRecords[latestIdx].updatedAt = new Date().toISOString();
+                saveRecords(latestRecords);
+                renderRecordsByDate();
+                showUploadToast('<i class="fa-solid fa-circle-check"></i> 切り抜き画像をアップロードしました。', 'success', 4000);
+            })
+            .catch((error) => {
+                showUploadToast(
+                    `<i class="fa-solid fa-circle-exclamation"></i> アップロード失敗: ${error.message || 'ネットワークエラー'}`,
+                    'error'
+                );
+            });
     };
     img.src = bgCanvas.toDataURL();
 }
@@ -1783,14 +1728,26 @@ window.addEventListener('resize', () => {
 
 window.addEventListener('beforeunload', () => {
     autoSaveCurrentRecord();
-    persistStoreToFile();
+    flushDirtyRecords();
 });
 
 async function initApp() {
-    await loadStoreFromFile();
-    await migrateLegacyLocalStorageToFileStoreIfNeeded();
+    if (authToken) {
+        try {
+            const me = await apiRequest(API_AUTH_ME);
+            currentSessionUser = me?.user || null;
+            const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
+            storeData[RECORDS_KEY] = Array.isArray(recordsPayload?.records) ? recordsPayload.records : [];
+            cacheRecordHashes(storeData[RECORDS_KEY]);
+        } catch (error) {
+            console.warn('Session restore failed:', error);
+            setAuthToken('');
+            currentSessionUser = null;
+            storeData[RECORDS_KEY] = [];
+            cacheRecordHashes(storeData[RECORDS_KEY]);
+        }
+    }
 
-    ensureDefaultAdmin();
     const sessionUser = getSessionUser();
     if (sessionUser) {
         showAppForUser(sessionUser);

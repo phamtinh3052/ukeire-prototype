@@ -1,12 +1,14 @@
-const USERS_KEY = 'ukeire_users_v1';
-const SESSION_KEY = 'ukeire_session_v1';
-const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
-const CLOUDINARY_CLOUD_NAME = 'dlnvnf9h3';
-const CLOUDINARY_UPLOAD_PRESET = 'ukeire-prototype';
-const SIDEBAR_COLLAPSED_KEY = 'ukeire_sidebar_collapsed_v1';
-const STORE_API_ENDPOINT = '/api/store';
-
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const AUTH_TOKEN_KEY = 'ukeire_auth_token_v2';
+const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
+const USERS_KEY = 'ukeire_users_v1';
+const API_AUTH_ME = '/api/auth/me';
+const API_AUTH_LOGOUT = '/api/auth/logout';
+const API_USERS = '/api/users';
+const API_RECORDS = '/api/records';
+const API_UPLOADS = '/api/uploads';
+
 
 const adminStatus = document.getElementById('admin-status');
 const usersTable = document.getElementById('users-table');
@@ -44,14 +46,17 @@ let selectedRecordId = null;
 
 const DEFAULT_STORE_DATA = {
     [USERS_KEY]: [],
-    [SESSION_KEY]: '',
-    [RECORDS_KEY]: [],
-    [SIDEBAR_COLLAPSED_KEY]: '0'
+    [RECORDS_KEY]: []
 };
 
 let storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-let storeLoaded = false;
-let storePersistTimer = null;
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+let currentSessionUser = null;
+let recordsSyncTimer = null;
+let recordsSyncRunning = false;
+const dirtyRecordIds = new Set();
+const syncedLinesHashByRecordId = new Map();
+const localRecordHashById = new Map();
 
 function todayDateString() {
     const now = new Date();
@@ -79,137 +84,160 @@ function formatRecordTimestamp(dateTimeStr) {
     return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
-function buildCloudinaryFolderByDate(dateStr) {
-    const fallback = todayDateString();
-    const target = (dateStr || fallback).trim();
-    const match = target.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) {
-        const [fy, fm, fd] = fallback.split('-');
-        return `nouhinsho/${fy}_${fm}_${fd}`;
-    }
-    const [, y, m, d] = match;
-    return `nouhinsho/${y}_${m}_${d}`;
+function pickDefaultNohinshoDate(records) {
+    const today = todayDateString();
+    const list = Array.isArray(records) ? records : [];
+    const active = list.filter((r) => !r?.isDeleted && typeof r?.date === 'string' && r.date);
+    if (active.length === 0) return today;
+    if (active.some((r) => r.date === today)) return today;
+    return active
+        .map((r) => r.date)
+        .sort((a, b) => (a < b ? 1 : -1))[0] || today;
 }
 
-function buildDeletedStoragePath(record) {
-    const folder = `${buildCloudinaryFolderByDate(record?.date || todayDateString())}/deleted`;
-    const sourcePath = `${record?.sourceStoragePath || ''}`.trim();
-    const fileName = sourcePath.split('/').pop() || `${record?.id || `r-${Date.now()}`}`;
-    return `${folder}/${fileName}`;
+async function apiRequest(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const response = await fetch(url, { ...options, headers });
+    const text = await response.text();
+    const payload = text ? (() => { try { return JSON.parse(text); } catch { return {}; } })() : {};
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    return payload;
 }
 
-function buildCloudinaryAssetUrl(publicId) {
-    if (!publicId) return '';
-    const cleanId = `${publicId}`.replace(/^\/+/, '');
-    return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${cleanId}`;
+function setAuthToken(token) {
+    authToken = token || '';
+    if (authToken) localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
-function normalizeStorePayload(payload) {
-    const normalized = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-    if (!payload || typeof payload !== 'object') return normalized;
-
-    normalized[USERS_KEY] = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
-    normalized[SESSION_KEY] = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY] : '';
-    normalized[RECORDS_KEY] = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
-    normalized[SIDEBAR_COLLAPSED_KEY] = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
-    return normalized;
+function isServerRecordId(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(`${id || ''}`);
 }
 
-function readLegacyStoreFromLocalStorage() {
-    try {
-        const usersRaw = localStorage.getItem(USERS_KEY);
-        const sessionRaw = localStorage.getItem(SESSION_KEY);
-        const recordsRaw = localStorage.getItem(RECORDS_KEY);
-        const sidebarRaw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
-
-        const hasLegacyData = usersRaw !== null || sessionRaw !== null || recordsRaw !== null || sidebarRaw !== null;
-        if (!hasLegacyData) return null;
-
-        let users = [];
-        let records = [];
-
-        if (usersRaw) {
-            try {
-                const parsed = JSON.parse(usersRaw);
-                users = Array.isArray(parsed) ? parsed : [];
-            } catch (_) {
-                users = [];
-            }
-        }
-
-        if (recordsRaw) {
-            try {
-                const parsed = JSON.parse(recordsRaw);
-                records = Array.isArray(parsed) ? parsed : [];
-            } catch (_) {
-                records = [];
-            }
-        }
-
-        return normalizeStorePayload({
-            [USERS_KEY]: users,
-            [SESSION_KEY]: typeof sessionRaw === 'string' ? sessionRaw : '',
-            [RECORDS_KEY]: records,
-            [SIDEBAR_COLLAPSED_KEY]: sidebarRaw === '1' ? '1' : '0'
-        });
-    } catch (error) {
-        console.warn('Failed to read legacy localStorage data:', error);
-        return null;
-    }
+function buildRecordPayload(record) {
+    return {
+        name: record.name || '無題',
+        date: record.date || todayDateString(),
+        status: normalizeRecordStatus(record),
+        rotation: Number.isFinite(record.rotation) ? record.rotation : 0,
+        sourceUrl: record.sourceUrl || '',
+        sourceStoragePath: record.sourceStoragePath || '',
+        sourceFileType: record.sourceFileType || '',
+        uploadStatus: record.uploadStatus || 'done',
+        isDeleted: !!record.isDeleted,
+        deletedAt: record.deletedAt || null,
+        deletedStoragePath: record.deletedStoragePath || ''
+    };
 }
 
-function isStoreDataEffectivelyEmpty(payload) {
-    if (!payload || typeof payload !== 'object') return true;
-    const users = Array.isArray(payload[USERS_KEY]) ? payload[USERS_KEY] : [];
-    const records = Array.isArray(payload[RECORDS_KEY]) ? payload[RECORDS_KEY] : [];
-    const session = typeof payload[SESSION_KEY] === 'string' ? payload[SESSION_KEY].trim() : '';
-    const sidebar = payload[SIDEBAR_COLLAPSED_KEY] === '1' ? '1' : '0';
-    return users.length === 0 && records.length === 0 && !session && sidebar === '0';
+function getLinesHistoryHash(record) {
+    return JSON.stringify(Array.isArray(record?.linesHistory) ? record.linesHistory : []);
 }
 
-async function migrateLegacyLocalStorageToFileStoreIfNeeded() {
-    if (!isStoreDataEffectivelyEmpty(storeData)) return;
-
-    const legacyData = readLegacyStoreFromLocalStorage();
-    if (!legacyData || isStoreDataEffectivelyEmpty(legacyData)) return;
-
-    storeData = legacyData;
-    await persistStoreToFile();
-    console.log('Migrated legacy localStorage data to file store.');
+function getLocalRecordHash(record) {
+    return JSON.stringify({
+        payload: buildRecordPayload(record),
+        lines: Array.isArray(record?.linesHistory) ? record.linesHistory : []
+    });
 }
 
-async function loadStoreFromFile() {
-    try {
-        const response = await fetch(STORE_API_ENDPOINT, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        storeData = normalizeStorePayload(payload);
-    } catch (error) {
-        console.warn('Failed to load store file:', error);
-        storeData = JSON.parse(JSON.stringify(DEFAULT_STORE_DATA));
-    }
-    storeLoaded = true;
+function cacheRecordHashes(records) {
+    localRecordHashById.clear();
+    (Array.isArray(records) ? records : []).forEach((r) => {
+        if (r?.id) localRecordHashById.set(r.id, getLocalRecordHash(r));
+    });
 }
 
-async function persistStoreToFile() {
-    if (!storeLoaded) return;
-    try {
-        await fetch(STORE_API_ENDPOINT, {
-            method: 'PUT',
+async function uploadImageDataUrl(dataUrl, fileName, dateStr) {
+    return apiRequest(API_UPLOADS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            dataUrl,
+            fileName,
+            date: dateStr || todayDateString()
+        })
+    });
+}
+
+async function syncRecordById(recordId) {
+    const records = getRecords();
+    const idx = records.findIndex((r) => r.id === recordId);
+    if (idx < 0) return;
+    const record = records[idx];
+
+    if (!isServerRecordId(record.id)) {
+        const created = await apiRequest(API_RECORDS, {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(storeData)
+            body: JSON.stringify(buildRecordPayload(record))
         });
-    } catch (error) {
-        console.warn('Failed to persist store file:', error);
+        const newId = created?.record?.id;
+        if (newId) {
+            record.id = newId;
+            records[idx] = record;
+            if (selectedRecordId === recordId) selectedRecordId = newId;
+            const oldHash = localRecordHashById.get(recordId);
+            if (oldHash !== undefined) {
+                localRecordHashById.delete(recordId);
+                localRecordHashById.set(newId, oldHash);
+            }
+            dirtyRecordIds.delete(recordId);
+            dirtyRecordIds.add(newId);
+            storeData[RECORDS_KEY] = records;
+        }
+        if (newId && Array.isArray(record.linesHistory)) {
+            await apiRequest(`${API_RECORDS}/${newId}/annotations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ linesHistory: record.linesHistory, comment: 'sync-create' })
+            });
+            syncedLinesHashByRecordId.set(newId, getLinesHistoryHash(record));
+        }
+        return;
+    }
+
+    await apiRequest(`${API_RECORDS}/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildRecordPayload(record))
+    });
+
+    if (Array.isArray(record.linesHistory)) {
+        const currentHash = getLinesHistoryHash(record);
+        const previousHash = syncedLinesHashByRecordId.get(record.id);
+        if (currentHash === previousHash) return;
+        await apiRequest(`${API_RECORDS}/${record.id}/annotations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linesHistory: record.linesHistory, comment: 'sync-update' })
+        });
+        syncedLinesHashByRecordId.set(record.id, currentHash);
     }
 }
 
-function scheduleStorePersist() {
-    if (!storeLoaded) return;
-    if (storePersistTimer) clearTimeout(storePersistTimer);
-    storePersistTimer = setTimeout(() => {
-        persistStoreToFile();
-    }, 80);
+async function flushDirtyRecords() {
+    if (recordsSyncRunning || !authToken) return;
+    recordsSyncRunning = true;
+    try {
+        while (dirtyRecordIds.size > 0) {
+            const [id] = Array.from(dirtyRecordIds);
+            dirtyRecordIds.delete(id);
+            await syncRecordById(id);
+        }
+    } catch (error) {
+        console.warn('Failed to sync record changes:', error);
+    } finally {
+        recordsSyncRunning = false;
+    }
+}
+
+function scheduleRecordsSync() {
+    if (recordsSyncTimer) clearTimeout(recordsSyncTimer);
+    recordsSyncTimer = setTimeout(() => {
+        flushDirtyRecords();
+    }, 150);
 }
 
 function getUsers() {
@@ -219,7 +247,6 @@ function getUsers() {
 
 function saveUsers(users) {
     storeData[USERS_KEY] = Array.isArray(users) ? users : [];
-    scheduleStorePersist();
 }
 
 function getRecords() {
@@ -228,33 +255,40 @@ function getRecords() {
 }
 
 function saveRecords(records) {
-    storeData[RECORDS_KEY] = Array.isArray(records) ? records : [];
-    scheduleStorePersist();
-}
+    const next = Array.isArray(records) ? records : [];
+    const liveIds = new Set();
 
-function ensureDefaultAdmin() {
-    const users = getUsers();
-    if (users.length > 0) return;
-    saveUsers([
-        {
-            id: `u-${Date.now()}`,
-            username: 'admin',
-            password: 'admin123',
-            role: 'admin',
-            brushColor: '#ff0000'
+    next.forEach((r) => {
+        if (!r?.id) return;
+        liveIds.add(r.id);
+        const currentHash = getLocalRecordHash(r);
+        const previousHash = localRecordHashById.get(r.id);
+        if (currentHash !== previousHash) {
+            dirtyRecordIds.add(r.id);
+            localRecordHashById.set(r.id, currentHash);
         }
-    ]);
+    });
+
+    Array.from(localRecordHashById.keys()).forEach((id) => {
+        if (!liveIds.has(id)) localRecordHashById.delete(id);
+    });
+
+    storeData[RECORDS_KEY] = next;
+    scheduleRecordsSync();
 }
 
 function getSessionUser() {
-    const userId = storeData[SESSION_KEY];
-    if (!userId) return null;
-    return getUsers().find((u) => u.id === userId) || null;
+    return currentSessionUser;
 }
 
-function clearSession() {
-    storeData[SESSION_KEY] = '';
-    scheduleStorePersist();
+async function clearSession() {
+    try {
+        if (authToken) await apiRequest(API_AUTH_LOGOUT, { method: 'POST' });
+    } catch (error) {
+        console.warn('Logout failed:', error);
+    }
+    setAuthToken('');
+    currentSessionUser = null;
 }
 
 function countAdmins(users) {
@@ -288,7 +322,7 @@ function setActiveTab(tab) {
     adminPanelNohinsho.classList.toggle('active', tab === 'nohinsho');
 
     if (tab === 'nohinsho' && !nohinshoDateInput.value) {
-        nohinshoDateInput.value = todayDateString();
+        nohinshoDateInput.value = pickDefaultNohinshoDate(getRecords());
     }
 
     if (tab === 'nohinsho') {
@@ -296,7 +330,7 @@ function setActiveTab(tab) {
     }
 }
 
-function createUser() {
+async function createUser() {
     const username = newUsernameInput.value.trim();
     const password = newPasswordInput.value.trim();
     const role = newRoleInput.value;
@@ -307,27 +341,25 @@ function createUser() {
         return;
     }
 
-    const users = getUsers();
-    if (users.some((u) => u.username === username)) {
-        alert('同じユーザー名が存在します。');
-        return;
+    try {
+        const result = await apiRequest(API_USERS, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, role, brushColor })
+        });
+
+        const users = getUsers();
+        users.push({ ...result.user, password: '' });
+        saveUsers(users);
+        newUsernameInput.value = '';
+        newPasswordInput.value = '';
+        newRoleInput.value = 'user';
+        newBrushColorInput.value = '#ff0000';
+        renderUsers();
+        setAdminMessage('ユーザーを追加しました。');
+    } catch (error) {
+        alert(`ユーザー追加失敗: ${error.message || 'network error'}`);
     }
-
-    users.push({
-        id: `u-${Date.now()}`,
-        username,
-        password,
-        role,
-        brushColor
-    });
-
-    saveUsers(users);
-    newUsernameInput.value = '';
-    newPasswordInput.value = '';
-    newRoleInput.value = 'user';
-    newBrushColorInput.value = '#ff0000';
-    renderUsers();
-    setAdminMessage('ユーザーを追加しました。');
 }
 
 function renderUsers() {
@@ -349,7 +381,7 @@ function renderUsers() {
                     <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
                 </select>
                 <input class="user-color" type="color" value="${u.brushColor || '#ff0000'}" aria-label="ブラシ色: ${u.username}" />
-                <input class="user-password" type="text" value="${u.password}" aria-label="パスワード: ${u.username}" />
+                <input class="user-password" type="text" value="" placeholder="変更時のみ入力" aria-label="パスワード: ${u.username}" />
                 <button class="btn-save-user btn-primary">保存</button>
                 <button class="btn-delete-user btn-danger" ${disableDelete ? 'disabled' : ''}>削除</button>
             </div>
@@ -357,7 +389,7 @@ function renderUsers() {
     }).join('');
 
     usersTable.querySelectorAll('.btn-save-user').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
             const row = e.target.closest('.user-row');
             if (!row) return;
 
@@ -365,11 +397,6 @@ function renderUsers() {
             const role = row.querySelector('.user-role').value;
             const brushColor = row.querySelector('.user-color').value;
             const password = row.querySelector('.user-password').value.trim();
-
-            if (!password) {
-                alert('パスワードは空にできません。');
-                return;
-            }
 
             const list = getUsers();
             const idx = list.findIndex((x) => x.id === id);
@@ -380,17 +407,27 @@ function renderUsers() {
                 return;
             }
 
-            list[idx].role = role;
-            list[idx].brushColor = brushColor;
-            list[idx].password = password;
-            saveUsers(list);
-            renderUsers();
-            setAdminMessage('ユーザーを更新しました。');
+            try {
+                const payload = { role, brushColor };
+                if (password) payload.password = password;
+                const result = await apiRequest(`${API_USERS}/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                list[idx] = { ...list[idx], ...result.user, password: '' };
+                saveUsers(list);
+                renderUsers();
+                setAdminMessage('ユーザーを更新しました。');
+            } catch (error) {
+                alert(`ユーザー更新失敗: ${error.message || 'network error'}`);
+            }
         });
     });
 
     usersTable.querySelectorAll('.btn-delete-user').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
             const row = e.target.closest('.user-row');
             if (!row) return;
 
@@ -406,9 +443,14 @@ function renderUsers() {
 
             if (!confirm(`ユーザー ${target.username} を削除しますか？`)) return;
 
-            saveUsers(list.filter((x) => x.id !== id));
-            renderUsers();
-            setAdminMessage('ユーザーを削除しました。');
+            try {
+                await apiRequest(`${API_USERS}/${id}`, { method: 'DELETE' });
+                saveUsers(list.filter((x) => x.id !== id));
+                renderUsers();
+                setAdminMessage('ユーザーを削除しました。');
+            } catch (error) {
+                alert(`ユーザー削除失敗: ${error.message || 'network error'}`);
+            }
         });
     });
 }
@@ -467,32 +509,6 @@ function parseFileToDataUrl(file) {
 
         reject(new Error('画像またはPDFファイルのみ対応しています。'));
     });
-}
-
-async function uploadFileToCloudinary(file, dateStr) {
-    const endpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-    formData.append('folder', buildCloudinaryFolderByDate(dateStr || todayDateString()));
-
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        body: formData
-    });
-
-    if (!response.ok) {
-        const text = await response.text();
-        let detail = text;
-        try { detail = JSON.parse(text)?.error?.message || text; } catch {}
-        throw new Error(`Cloudinary upload failed (${response.status}): ${detail}`);
-    }
-
-    const result = await response.json();
-    return {
-        storagePath: result.public_id || '',
-        downloadURL: result.secure_url || ''
-    };
 }
 
 function createNohinshoRecordSkeleton(fileName, dateStr) {
@@ -599,15 +615,9 @@ function openNohinshoRecord(recordId) {
     nohinshoNameInput.value = record.name || '';
     nohinshoDateEditInput.value = record.date || todayDateString();
     nohinshoStatusInput.value = normalizeRecordStatus(record);
-    nohinshoUrlInput.value = record.sourceUrl || record.sourceStoragePath || '';
+    nohinshoUrlInput.value = record.sourceUrl || '';
 
     let imageUrl = record.sourceUrl || '';
-    if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('data:')) {
-        imageUrl = buildCloudinaryAssetUrl(imageUrl);
-    }
-    if (!imageUrl && record.sourceStoragePath) {
-        imageUrl = buildCloudinaryAssetUrl(record.sourceStoragePath);
-    }
     if (!imageUrl && record.bgDataUrl) {
         imageUrl = record.bgDataUrl;
     }
@@ -648,15 +658,12 @@ function deleteSelectedNohinshoRecord() {
     if (idx < 0) return;
 
     const record = records[idx];
-    if (!confirm(`「${record.name || '無題'}」を deleted フォルダへ移動しますか？`)) return;
+    if (!confirm(`「${record.name || '無題'}」を削除一覧へ移動しますか？`)) return;
 
-    const deletedPath = buildDeletedStoragePath(record);
     records[idx] = {
         ...record,
         isDeleted: true,
         deletedAt: new Date().toISOString(),
-        deletedStoragePath: deletedPath,
-        sourceStoragePath: deletedPath,
         uploadStatus: 'deleted',
         updatedAt: new Date().toISOString()
     };
@@ -669,7 +676,7 @@ function deleteSelectedNohinshoRecord() {
     nohinshoUrlInput.value = '';
     setPreviewImage('');
     renderNohinshoRecords();
-    setAdminMessage('納品書を deleted フォルダへ移動しました。');
+    setAdminMessage('納品書を削除一覧へ移動しました。');
 }
 
 async function uploadNohinshoFile(file, dateStr, options = {}) {
@@ -686,15 +693,14 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
 
     try {
         const dataUrl = await parseFileToDataUrl(file);
-        const uploadBlob = dataUrlToBlob(dataUrl);
-        if (!silent) setAdminMessage('Cloudinaryへアップロード中...');
-
-        const uploadResult = await uploadFileToCloudinary(uploadBlob, targetDate);
         const latest = getRecords();
         const idx = latest.findIndex((r) => r.id === record.id);
+        if (!silent) setAdminMessage('Supabase Storage へアップロード中...');
+
+        const uploadResult = await uploadImageDataUrl(dataUrl, file.name, targetDate);
         if (idx >= 0) {
-            latest[idx].sourceUrl = uploadResult.downloadURL;
-            latest[idx].sourceStoragePath = uploadResult.storagePath;
+            latest[idx].sourceUrl = uploadResult.publicUrl || '';
+            latest[idx].sourceStoragePath = uploadResult.storagePath || '';
             latest[idx].uploadStatus = 'done';
             latest[idx].updatedAt = new Date().toISOString();
             saveRecords(latest);
@@ -705,7 +711,7 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
             openNohinshoRecord(record.id);
         }
 
-        if (!silent) setAdminMessage('アップロードしました。');
+        if (!silent) setAdminMessage('画像をアップロードしました。');
         return { ok: true, recordId: record.id };
     } catch (error) {
         const latest = getRecords();
@@ -749,9 +755,21 @@ async function uploadNohinshoFolder(files) {
 }
 
 async function boot() {
-    await loadStoreFromFile();
-    await migrateLegacyLocalStorageToFileStoreIfNeeded();
-    ensureDefaultAdmin();
+    try {
+        const me = await apiRequest(API_AUTH_ME);
+        currentSessionUser = me?.user || null;
+        const usersPayload = await apiRequest(API_USERS);
+        const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
+        saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
+        saveRecords(recordsPayload?.records || []);
+        cacheRecordHashes(storeData[RECORDS_KEY]);
+        dirtyRecordIds.clear();
+    } catch (error) {
+        console.warn('Admin boot failed:', error);
+        setAuthToken('');
+        currentSessionUser = null;
+    }
+
     const sessionUser = getSessionUser();
 
     if (!sessionUser || sessionUser.role !== 'admin') {
@@ -761,8 +779,9 @@ async function boot() {
     }
 
     adminStatus.textContent = `ログイン中: ${sessionUser.username} (admin)`;
-    nohinshoDateInput.value = todayDateString();
-    nohinshoDateEditInput.value = todayDateString();
+    const defaultDate = pickDefaultNohinshoDate(getRecords());
+    nohinshoDateInput.value = defaultDate;
+    nohinshoDateEditInput.value = defaultDate;
     renderUsers();
     renderNohinshoRecords();
     setActiveTab('users');
@@ -776,8 +795,9 @@ document.getElementById('btn-back').addEventListener('click', () => {
     window.location.href = 'index.html';
 });
 document.getElementById('btn-logout-admin').addEventListener('click', () => {
-    clearSession();
-    window.location.href = 'index.html';
+    clearSession().finally(() => {
+        window.location.href = 'index.html';
+    });
 });
 
 btnNohinshoToday.addEventListener('click', () => {
@@ -811,7 +831,7 @@ btnNohinshoDelete.addEventListener('click', deleteSelectedNohinshoRecord);
 btnNohinshoApplyUpload.addEventListener('click', () => nohinshoFileInput.click());
 
 window.addEventListener('beforeunload', () => {
-    persistStoreToFile();
+    flushDirtyRecords();
 });
 
 boot();

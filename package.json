@@ -1,0 +1,20 @@
+{
+  "name": "ukeire-prototype",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal deployable backend + static app for ukeire prototype",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

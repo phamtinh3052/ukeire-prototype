@@ -1,13 +1,13 @@
-const CACHE_NAME = 'ukeire-pwa-v1';
+const CACHE_NAME = 'ukeire-pwa-v3';
 
 const LOCAL_ASSETS = [
   './',
   './index.html',
   './admin.html',
-  './style.css',
-  './app-main.js',
-  './admin.js',
-  './icon.svg',
+  './css/style.css',
+  './js/app-main.js',
+  './js/admin.js',
+  './assets/icon.svg',
   './manifest.json',
 ];
 
@@ -41,21 +41,38 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(event.request.url);
   const isLocal = url.origin === self.location.origin;
+  const pathname = url.pathname || '';
+  const isHtmlOrJs = pathname.endsWith('.html') || pathname.endsWith('.js') || pathname === '/' || pathname === '';
 
   if (isLocal) {
-    // Cache-first cho local assets
-    event.respondWith(
-      caches.match(event.request).then(cached => {
-        if (cached) return cached;
-        return fetch(event.request).then(response => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          }
-          return response;
-        });
-      })
-    );
+    // Network-first cho HTML/JS để tránh stale code sau deploy/update.
+    // Các local assets còn lại dùng cache-first.
+    if (isHtmlOrJs) {
+      event.respondWith(
+        fetch(event.request)
+          .then(response => {
+            if (response && response.status === 200) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+            }
+            return response;
+          })
+          .catch(() => caches.match(event.request))
+      );
+    } else {
+      event.respondWith(
+        caches.match(event.request).then(cached => {
+          if (cached) return cached;
+          return fetch(event.request).then(response => {
+            if (response && response.status === 200) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+            }
+            return response;
+          });
+        })
+      );
+    }
   } else {
     // Network-first cho CDN, fallback về cache khi offline
     event.respondWith(

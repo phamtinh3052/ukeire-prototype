@@ -13,12 +13,12 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="納品書">
-    <link rel="apple-touch-icon" href="icon.svg">
+    <link rel="apple-touch-icon" href="assets/icon.svg">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div class="admin-shell">
@@ -113,7 +113,7 @@
                                     <option value="not_checked">未チェック</option>
                                     <option value="done">確認完了</option>
                                 </select>
-                                <input id="nohinsho-url" type="text" placeholder="Cloudinary URL / public_id" readonly>
+                                <input id="nohinsho-url" type="text" placeholder="画像URL" readonly>
                                 <div class="tool-group-row">
                                     <button id="btn-nohinsho-save" class="btn-primary" type="button"><span>保存</span></button>
                                     <button id="btn-nohinsho-delete" class="btn-danger" type="button"><span>削除</span></button>
@@ -131,6 +131,6 @@
         </main>
     </div>
 
-    <script src="admin.js"></script>
+    <script src="js/admin.js"></script>
 </body>
 </html>
