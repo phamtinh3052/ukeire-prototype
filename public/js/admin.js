@@ -28,6 +28,7 @@ const nohinshoSortInput = document.getElementById('nohinsho-sort');
 const btnNohinshoToday = document.getElementById('btn-nohinsho-today');
 const btnNohinshoUpload = document.getElementById('btn-nohinsho-upload');
 const btnNohinshoUploadFolder = document.getElementById('btn-nohinsho-upload-folder');
+const btnNohinshoPurgeDeleted = document.getElementById('btn-nohinsho-purge-deleted');
 const nohinshoRecordsList = document.getElementById('nohinsho-records-list');
 const nohinshoPreview = document.getElementById('nohinsho-preview');
 const nohinshoPreviewEmpty = document.getElementById('nohinsho-preview-empty');
@@ -754,6 +755,35 @@ async function uploadNohinshoFolder(files) {
     renderNohinshoRecords();
 }
 
+async function purgeSoftDeletedRecords() {
+    const confirmed = confirm('削除済みの納品書を完全削除します。元に戻せません。実行しますか？');
+    if (!confirmed) return;
+
+    try {
+        btnNohinshoPurgeDeleted.disabled = true;
+        setAdminMessage('削除済みデータを完全削除中...');
+
+        const result = await apiRequest('/api/admin/records/purge-soft-deleted', {
+            method: 'DELETE'
+        });
+
+        const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
+        saveRecords(recordsPayload?.records || []);
+        cacheRecordHashes(storeData[RECORDS_KEY]);
+        dirtyRecordIds.clear();
+
+        selectedRecordId = null;
+        clearNohinshoDetailForm();
+        renderNohinshoRecords();
+
+        setAdminMessage(`完全削除しました: ${result?.purgedCount || 0}件（Storage削除: ${result?.removedStorageCount || 0}件）`);
+    } catch (error) {
+        setAdminMessage(`完全削除失敗: ${error.message || 'network error'}`, 'error');
+    } finally {
+        btnNohinshoPurgeDeleted.disabled = false;
+    }
+}
+
 async function boot() {
     try {
         const me = await apiRequest(API_AUTH_ME);
@@ -816,6 +846,7 @@ nohinshoSortInput.addEventListener('change', renderNohinshoRecords);
 
 btnNohinshoUpload.addEventListener('click', () => nohinshoFileInput.click());
 btnNohinshoUploadFolder.addEventListener('click', () => nohinshoFolderInput.click());
+btnNohinshoPurgeDeleted.addEventListener('click', purgeSoftDeletedRecords);
 nohinshoFileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) await uploadNohinshoFile(file, nohinshoDateInput.value || todayDateString());

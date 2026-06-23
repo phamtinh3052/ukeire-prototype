@@ -163,6 +163,30 @@ async function uploadDataUrlToStorage({ dataUrl, fileName, dateStr }) {
   };
 }
 
+async function removeStoragePaths(paths) {
+  const normalized = Array.from(new Set(
+    (Array.isArray(paths) ? paths : [])
+      .map((p) => `${p || ''}`.trim())
+      .filter(Boolean)
+  ));
+
+  if (normalized.length === 0) return { removedStorageCount: 0 };
+
+  let removedStorageCount = 0;
+  const chunkSize = 100;
+  for (let i = 0; i < normalized.length; i += chunkSize) {
+    const chunk = normalized.slice(i, i + chunkSize);
+    const { data, error } = await supabase.storage
+      .from(SUPABASE_STORAGE_BUCKET)
+      .remove(chunk);
+
+    if (error) throw new Error(`Storage delete failed: ${error.message}`);
+    removedStorageCount += Array.isArray(data) ? data.length : 0;
+  }
+
+  return { removedStorageCount };
+}
+
 async function getSessionByToken(token) {
   const { data: session, error } = await supabase
     .from('user_sessions')
@@ -396,6 +420,42 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Delete user failed' });
+  }
+});
+
+app.delete('/api/admin/records/purge-soft-deleted', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: targets, error: fetchError } = await supabase
+      .from('nohinsho_records')
+      .select('id, source_storage_path, deleted_storage_path')
+      .eq('is_deleted', true);
+
+    if (fetchError) throw new Error(`Fetch soft-deleted records failed: ${fetchError.message}`);
+
+    const rows = Array.isArray(targets) ? targets : [];
+    if (rows.length === 0) {
+      return res.json({ ok: true, purgedCount: 0, removedStorageCount: 0 });
+    }
+
+    const recordIds = rows.map((r) => r.id).filter(Boolean);
+    const storagePaths = rows.flatMap((r) => [r.source_storage_path, r.deleted_storage_path]);
+
+    const { removedStorageCount } = await removeStoragePaths(storagePaths);
+
+    const { error: deleteError } = await supabase
+      .from('nohinsho_records')
+      .delete()
+      .in('id', recordIds);
+
+    if (deleteError) throw new Error(`Hard delete records failed: ${deleteError.message}`);
+
+    res.json({
+      ok: true,
+      purgedCount: recordIds.length,
+      removedStorageCount
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Purge soft-deleted records failed' });
   }
 });
 

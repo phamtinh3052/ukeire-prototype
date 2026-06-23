@@ -26,6 +26,12 @@
 - `PATCH /api/records/:id`
 - `DELETE /api/records/:id` (soft delete)
 
+### Admin hard delete (records)
+
+- `DELETE /api/admin/records/purge-soft-deleted` (admin only)
+  - Xóa cứng toàn bộ record đã soft delete (`is_deleted=true`)
+  - Đồng thời xóa file tương ứng trong Supabase Storage (nếu có)
+
 ## Uploads
 
 - `POST /api/uploads`
