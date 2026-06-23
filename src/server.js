@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5173;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -23,7 +24,10 @@ const RECORD_STATUSES = new Set(['not_checked', 'done']);
 const UPLOAD_STATUSES = new Set(['uploading', 'done', 'failed', 'deleted']);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false }
+  auth: { persistSession: false, autoRefreshToken: false },
+  realtime: {
+    transport: ws
+  }
 });
 
 const app = express();
