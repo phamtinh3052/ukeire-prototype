@@ -12,6 +12,7 @@ const API_UPLOADS = '/api/uploads';
 
 const adminStatus = document.getElementById('admin-status');
 const usersTable = document.getElementById('users-table');
+const toggleShowInactiveUsers = document.getElementById('toggle-show-inactive-users');
 const newUsernameInput = document.getElementById('new-username');
 const newPasswordInput = document.getElementById('new-password');
 const newRoleInput = document.getElementById('new-role');
@@ -31,6 +32,8 @@ const btnNohinshoUploadFolder = document.getElementById('btn-nohinsho-upload-fol
 const btnNohinshoPurgeDeleted = document.getElementById('btn-nohinsho-purge-deleted');
 const nohinshoRecordsList = document.getElementById('nohinsho-records-list');
 const nohinshoPreview = document.getElementById('nohinsho-preview');
+const nohinshoPreviewCanvas = document.getElementById('nohinsho-preview-canvas');
+const nohinshoPreviewCtx = nohinshoPreviewCanvas.getContext('2d');
 const nohinshoPreviewEmpty = document.getElementById('nohinsho-preview-empty');
 const nohinshoNameInput = document.getElementById('nohinsho-name');
 const nohinshoDateEditInput = document.getElementById('nohinsho-date-edit');
@@ -44,6 +47,7 @@ const nohinshoFolderInput = document.getElementById('nohinsho-folder-input');
 
 let activeAdminTab = 'users';
 let selectedRecordId = null;
+let showInactiveUsers = false;
 
 const DEFAULT_STORE_DATA = {
     [USERS_KEY]: [],
@@ -162,6 +166,32 @@ async function uploadImageDataUrl(dataUrl, fileName, dateStr) {
     });
 }
 
+function extractAnnotationLines(latestAnnotation) {
+    if (!latestAnnotation) return null;
+    return Array.isArray(latestAnnotation.lines_history) ? JSON.parse(JSON.stringify(latestAnnotation.lines_history)) : [];
+}
+
+async function loadRecordDetail(record) {
+    if (!record?.id || !isServerRecordId(record.id)) {
+        return { record, linesHistory: Array.isArray(record?.linesHistory) ? JSON.parse(JSON.stringify(record.linesHistory)) : [] };
+    }
+
+    const detail = await apiRequest(`${API_RECORDS}/${record.id}`);
+    if (detail?.record) Object.assign(record, detail.record);
+
+    const annotationLines = extractAnnotationLines(detail?.latestAnnotation);
+    const linesHistory = annotationLines ?? (Array.isArray(record?.linesHistory) ? JSON.parse(JSON.stringify(record.linesHistory)) : []);
+    if (annotationLines !== null) {
+        record.linesHistory = linesHistory;
+    }
+    localRecordHashById.set(record.id, getLocalRecordHash(record));
+    if (annotationLines !== null) {
+        syncedLinesHashByRecordId.set(record.id, getLinesHistoryHash(record));
+    }
+
+    return { record, linesHistory };
+}
+
 async function syncRecordById(recordId) {
     const records = getRecords();
     const idx = records.findIndex((r) => r.id === recordId);
@@ -234,6 +264,14 @@ async function flushDirtyRecords() {
     }
 }
 
+async function waitForRecordSyncIdle() {
+    for (let i = 0; i < 30; i++) {
+        await flushDirtyRecords();
+        if (!recordsSyncRunning && dirtyRecordIds.size === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+}
+
 function scheduleRecordsSync() {
     if (recordsSyncTimer) clearTimeout(recordsSyncTimer);
     recordsSyncTimer = setTimeout(() => {
@@ -248,6 +286,13 @@ function getUsers() {
 
 function saveUsers(users) {
     storeData[USERS_KEY] = Array.isArray(users) ? users : [];
+}
+
+async function refreshUsers() {
+    const query = showInactiveUsers ? '?includeInactive=true' : '';
+    const usersPayload = await apiRequest(`${API_USERS}${query}`);
+    saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
+    renderUsers();
 }
 
 function getRecords() {
@@ -349,14 +394,11 @@ async function createUser() {
             body: JSON.stringify({ username, password, role, brushColor })
         });
 
-        const users = getUsers();
-        users.push({ ...result.user, password: '' });
-        saveUsers(users);
         newUsernameInput.value = '';
         newPasswordInput.value = '';
         newRoleInput.value = 'user';
         newBrushColorInput.value = '#ff0000';
-        renderUsers();
+        await refreshUsers();
         setAdminMessage('ユーザーを追加しました。');
     } catch (error) {
         alert(`ユーザー追加失敗: ${error.message || 'network error'}`);
@@ -374,9 +416,11 @@ function renderUsers() {
 
     usersTable.innerHTML = users.map((u) => {
         const disableDelete = sessionUser && u.id === sessionUser.id;
+        const inactiveClass = u.isActive === false ? 'inactive' : '';
+        const inactiveLabel = u.isActive === false ? '<span class="user-name-status">inactive</span>' : '';
         return `
-            <div class="user-row" data-id="${u.id}">
-                <div class="user-name">${u.username}</div>
+            <div class="user-row ${inactiveClass}" data-id="${u.id}">
+                <div class="user-name">${u.username}${inactiveLabel}</div>
                 <select class="user-role" aria-label="権限: ${u.username}">
                     <option value="user" ${u.role === 'user' ? 'selected' : ''}>user</option>
                     <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
@@ -418,8 +462,7 @@ function renderUsers() {
                 });
 
                 list[idx] = { ...list[idx], ...result.user, password: '' };
-                saveUsers(list);
-                renderUsers();
+                await refreshUsers();
                 setAdminMessage('ユーザーを更新しました。');
             } catch (error) {
                 alert(`ユーザー更新失敗: ${error.message || 'network error'}`);
@@ -446,8 +489,7 @@ function renderUsers() {
 
             try {
                 await apiRequest(`${API_USERS}/${id}`, { method: 'DELETE' });
-                saveUsers(list.filter((x) => x.id !== id));
-                renderUsers();
+                await refreshUsers();
                 setAdminMessage('ユーザーを削除しました。');
             } catch (error) {
                 alert(`ユーザー削除失敗: ${error.message || 'network error'}`);
@@ -588,13 +630,81 @@ function setPreviewImage(imageUrl) {
     if (!imageUrl) {
         nohinshoPreview.removeAttribute('src');
         nohinshoPreview.style.display = 'none';
+        nohinshoPreviewCanvas.style.display = 'none';
+        nohinshoPreviewCtx.clearRect(0, 0, nohinshoPreviewCanvas.width, nohinshoPreviewCanvas.height);
         nohinshoPreviewEmpty.style.display = 'block';
         return;
     }
 
     nohinshoPreviewEmpty.style.display = 'none';
-    nohinshoPreview.style.display = 'block';
+    nohinshoPreview.style.display = 'none';
     nohinshoPreview.src = imageUrl;
+}
+
+function drawLinesOnPreview(linesHistory) {
+    (Array.isArray(linesHistory) ? linesHistory : []).forEach((line) => {
+        if (!Array.isArray(line?.points) || line.points.length < 1) return;
+
+        nohinshoPreviewCtx.beginPath();
+        nohinshoPreviewCtx.lineWidth = line.width;
+        nohinshoPreviewCtx.lineCap = 'round';
+        nohinshoPreviewCtx.lineJoin = 'round';
+
+        if (line.tool === 'eraser') {
+            nohinshoPreviewCtx.globalCompositeOperation = 'destination-out';
+            nohinshoPreviewCtx.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+            nohinshoPreviewCtx.globalCompositeOperation = 'source-over';
+            nohinshoPreviewCtx.strokeStyle = line.color || '#ff0000';
+        }
+
+        nohinshoPreviewCtx.moveTo(line.points[0].x, line.points[0].y);
+        for (let i = 1; i < line.points.length; i++) {
+            nohinshoPreviewCtx.lineTo(line.points[i].x, line.points[i].y);
+        }
+        nohinshoPreviewCtx.stroke();
+    });
+
+    nohinshoPreviewCtx.globalCompositeOperation = 'source-over';
+}
+
+function renderPreviewCanvas(imageUrl, linesHistory = []) {
+    if (!imageUrl) {
+        setPreviewImage('');
+        return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+        if (!selectedRecordId) return;
+
+        nohinshoPreviewCanvas.width = img.naturalWidth || img.width;
+        nohinshoPreviewCanvas.height = img.naturalHeight || img.height;
+        nohinshoPreviewCtx.clearRect(0, 0, nohinshoPreviewCanvas.width, nohinshoPreviewCanvas.height);
+        nohinshoPreviewCtx.drawImage(img, 0, 0);
+        drawLinesOnPreview(linesHistory);
+
+        const container = nohinshoPreviewCanvas.parentElement;
+        const availableWidth = Math.max(1, (container?.clientWidth || nohinshoPreviewCanvas.width) - 24);
+        const availableHeight = 640;
+        const scale = Math.min(
+            availableWidth / nohinshoPreviewCanvas.width,
+            availableHeight / nohinshoPreviewCanvas.height,
+            1
+        );
+
+        nohinshoPreviewCanvas.style.width = `${Math.max(1, nohinshoPreviewCanvas.width * scale)}px`;
+        nohinshoPreviewCanvas.style.height = `${Math.max(1, nohinshoPreviewCanvas.height * scale)}px`;
+        nohinshoPreviewCanvas.style.display = 'block';
+        nohinshoPreview.style.display = 'none';
+        nohinshoPreviewEmpty.style.display = 'none';
+    };
+
+    img.onerror = () => {
+        setPreviewImage(imageUrl);
+    };
+
+    img.src = imageUrl;
 }
 
 function clearNohinshoDetailForm() {
@@ -605,12 +715,22 @@ function clearNohinshoDetailForm() {
     setPreviewImage('');
 }
 
-function openNohinshoRecord(recordId) {
+async function openNohinshoRecord(recordId) {
     selectedRecordId = recordId;
     const record = getRecords().find((r) => r.id === recordId);
     if (!record) {
         renderNohinshoRecords();
         return;
+    }
+
+    let linesHistory = Array.isArray(record.linesHistory) ? JSON.parse(JSON.stringify(record.linesHistory)) : [];
+
+    try {
+        const detail = await loadRecordDetail(record);
+        if (selectedRecordId !== record.id) return;
+        linesHistory = detail.linesHistory;
+    } catch (error) {
+        console.warn('Failed to load latest annotation for admin preview:', error);
     }
 
     nohinshoNameInput.value = record.name || '';
@@ -623,7 +743,7 @@ function openNohinshoRecord(recordId) {
         imageUrl = record.bgDataUrl;
     }
 
-    setPreviewImage(imageUrl);
+    renderPreviewCanvas(imageUrl, linesHistory);
     renderNohinshoRecords();
 }
 
@@ -648,7 +768,7 @@ function saveSelectedNohinshoRecord() {
     setAdminMessage('納品書を保存しました。');
 }
 
-function deleteSelectedNohinshoRecord() {
+async function deleteSelectedNohinshoRecord() {
     if (!selectedRecordId) {
         alert('対象の納品書を選択してください。');
         return;
@@ -670,6 +790,11 @@ function deleteSelectedNohinshoRecord() {
     };
 
     saveRecords(records);
+    try {
+        await waitForRecordSyncIdle();
+    } catch (error) {
+        console.warn('Failed to sync soft delete immediately in admin:', error);
+    }
     selectedRecordId = null;
     nohinshoNameInput.value = '';
     nohinshoDateEditInput.value = nohinshoDateInput.value || todayDateString();
@@ -763,6 +888,8 @@ async function purgeSoftDeletedRecords() {
         btnNohinshoPurgeDeleted.disabled = true;
         setAdminMessage('削除済みデータを完全削除中...');
 
+        await waitForRecordSyncIdle();
+
         const result = await apiRequest('/api/admin/records/purge-soft-deleted', {
             method: 'DELETE'
         });
@@ -788,10 +915,9 @@ async function boot() {
     try {
         const me = await apiRequest(API_AUTH_ME);
         currentSessionUser = me?.user || null;
-        const usersPayload = await apiRequest(API_USERS);
         const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
-        saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
         saveRecords(recordsPayload?.records || []);
+        await refreshUsers();
         cacheRecordHashes(storeData[RECORDS_KEY]);
         dirtyRecordIds.clear();
     } catch (error) {
@@ -819,6 +945,14 @@ async function boot() {
 
 adminTabUsers.addEventListener('click', () => setActiveTab('users'));
 adminTabNohinsho.addEventListener('click', () => setActiveTab('nohinsho'));
+toggleShowInactiveUsers.addEventListener('change', async (e) => {
+    showInactiveUsers = !!e.target.checked;
+    try {
+        await refreshUsers();
+    } catch (error) {
+        setAdminMessage(`ユーザー一覧の更新失敗: ${error.message || 'network error'}`, 'error');
+    }
+});
 
 document.getElementById('btn-create-user').addEventListener('click', createUser);
 document.getElementById('btn-back').addEventListener('click', () => {

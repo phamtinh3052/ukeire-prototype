@@ -10,12 +10,12 @@
 
 ## Users (admin only)
 
-- `GET /api/users`
+- `GET /api/users?includeInactive=true|false`
 - `POST /api/users`
   - body: `{ "username", "password", "role": "admin|user", "brushColor": "#ff0000" }`
 - `PATCH /api/users/:id`
   - body (optional fields): `{ "role", "brushColor", "password", "isActive" }`
-- `DELETE /api/users/:id` (soft disable user)
+- `DELETE /api/users/:id` (soft disable user + revoke sessions)
 
 ## Records
 

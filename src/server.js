@@ -56,6 +56,7 @@ function toSafeUser(user) {
 }
 
 function normalizeRecordRow(row) {
+  const isDeleted = !!row.is_deleted || row.upload_status === 'deleted';
   return {
     id: row.id,
     name: row.name,
@@ -68,13 +69,43 @@ function normalizeRecordRow(row) {
     sourceFileType: row.source_file_type || '',
     uploadStatus: row.upload_status || 'done',
     editorUserId: row.editor_user_id || '',
-    isDeleted: !!row.is_deleted,
+    isDeleted,
     deletedAt: row.deleted_at || null,
     deletedStoragePath: row.deleted_storage_path || '',
     updatedAt: row.updated_at,
     createdAt: row.created_at,
     legacyId: row.legacy_id || ''
   };
+}
+
+function withLinesHistory(record, linesHistory = []) {
+  return {
+    ...record,
+    linesHistory: Array.isArray(linesHistory) ? linesHistory : []
+  };
+}
+
+async function fetchLatestAnnotationsMap(recordIds) {
+  const ids = Array.from(new Set((Array.isArray(recordIds) ? recordIds : []).filter(Boolean)));
+  const result = new Map();
+  if (ids.length === 0) return result;
+
+  const { data, error } = await supabase
+    .from('nohinsho_annotations')
+    .select('record_id, version, lines_history')
+    .in('record_id', ids)
+    .order('record_id', { ascending: true })
+    .order('version', { ascending: false });
+
+  if (error) throw new Error(`Latest annotations fetch failed: ${error.message}`);
+
+  (data || []).forEach((row) => {
+    if (!result.has(row.record_id)) {
+      result.set(row.record_id, Array.isArray(row.lines_history) ? row.lines_history : []);
+    }
+  });
+
+  return result;
 }
 
 function randomToken() {
@@ -87,6 +118,17 @@ function isValidDateString(v) {
 
 function badRequest(res, message) {
   return res.status(400).json({ error: message });
+}
+
+async function countActiveAdmins() {
+  const { count, error } = await supabase
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('role', 'admin')
+    .eq('is_active', true);
+
+  if (error) throw new Error(`Active admin count failed: ${error.message}`);
+  return count || 0;
 }
 
 function buildStorageFolderByDate(dateStr) {
@@ -328,12 +370,18 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
   res.json({ user: toSafeUser(req.authUser) });
 });
 
-app.get('/api/users', requireAuth, requireAdmin, async (_req, res) => {
+app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const includeInactive = `${req.query.includeInactive || 'false'}` === 'true';
+
+    let query = supabase
       .from('users')
       .select('*')
       .order('created_at', { ascending: true });
+
+    if (!includeInactive) query = query.eq('is_active', true);
+
+    const { data, error } = await query;
     if (error) throw new Error(`Users fetch failed: ${error.message}`);
     res.json({ users: (data || []).map(toSafeUser) });
   } catch (error) {
@@ -374,22 +422,40 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
 app.patch('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
+    const { data: before, error: beforeError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (beforeError) throw new Error(`Fetch user failed: ${beforeError.message}`);
+    if (!before) return res.status(404).json({ error: 'User not found' });
+
     const patch = {};
+    let nextRole = before.role;
+    let nextIsActive = before.is_active;
 
     if (typeof req.body?.role === 'string') {
       if (!ROLES.has(req.body.role)) return badRequest(res, 'invalid role');
       patch.role = req.body.role;
+      nextRole = req.body.role;
     }
     if (typeof req.body?.brushColor === 'string') {
       patch.brush_color = req.body.brushColor;
     }
     if (typeof req.body?.isActive === 'boolean') {
       patch.is_active = req.body.isActive;
+      nextIsActive = req.body.isActive;
     }
     if (typeof req.body?.password === 'string' && req.body.password.trim()) {
       patch.password_hash = await bcrypt.hash(req.body.password.trim(), 10);
     }
     if (Object.keys(patch).length === 0) return badRequest(res, 'no valid fields to update');
+
+    if (before.role === 'admin' && before.is_active && (nextRole !== 'admin' || !nextIsActive)) {
+      const activeAdminCount = await countActiveAdmins();
+      if (activeAdminCount <= 1) return badRequest(res, 'cannot change the last active admin');
+    }
 
     const { data, error } = await supabase
       .from('users')
@@ -399,7 +465,16 @@ app.patch('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
       .maybeSingle();
 
     if (error) throw new Error(`Update user failed: ${error.message}`);
-    if (!data) return res.status(404).json({ error: 'User not found' });
+
+    if (before.is_active && !data.is_active) {
+      const { error: revokeError } = await supabase
+        .from('user_sessions')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .is('revoked_at', null);
+      if (revokeError) throw new Error(`Revoke sessions failed: ${revokeError.message}`);
+    }
+
     res.json({ user: toSafeUser(data) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Update user failed' });
@@ -411,11 +486,32 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     const userId = req.params.id;
     if (req.authUser.id === userId) return badRequest(res, 'cannot delete current user');
 
+    const { data: targetUser, error: targetError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (targetError) throw new Error(`Fetch user failed: ${targetError.message}`);
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+    if (targetUser.role === 'admin' && targetUser.is_active) {
+      const activeAdminCount = await countActiveAdmins();
+      if (activeAdminCount <= 1) return badRequest(res, 'cannot delete the last active admin');
+    }
+
     const { error } = await supabase
       .from('users')
       .update({ is_active: false })
       .eq('id', userId);
     if (error) throw new Error(`Delete user failed: ${error.message}`);
+
+    const { error: revokeError } = await supabase
+      .from('user_sessions')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .is('revoked_at', null);
+    if (revokeError) throw new Error(`Revoke sessions failed: ${revokeError.message}`);
 
     res.json({ ok: true });
   } catch (error) {
@@ -427,8 +523,8 @@ app.delete('/api/admin/records/purge-soft-deleted', requireAuth, requireAdmin, a
   try {
     const { data: targets, error: fetchError } = await supabase
       .from('nohinsho_records')
-      .select('id, source_storage_path, deleted_storage_path')
-      .eq('is_deleted', true);
+      .select('id, source_storage_path, deleted_storage_path, is_deleted, upload_status')
+      .or('is_deleted.eq.true,upload_status.eq.deleted');
 
     if (fetchError) throw new Error(`Fetch soft-deleted records failed: ${fetchError.message}`);
 
@@ -471,7 +567,7 @@ app.get('/api/records', requireAuth, async (req, res) => {
       .order('updated_at', { ascending: false });
 
     if (isValidDateString(date)) query = query.eq('work_date', date);
-    if (!includeDeleted) query = query.eq('is_deleted', false);
+    if (!includeDeleted) query = query.eq('is_deleted', false).neq('upload_status', 'deleted');
 
     const { data, error } = await query;
     if (error) throw new Error(`Records fetch failed: ${error.message}`);
@@ -481,7 +577,10 @@ app.get('/api/records', requireAuth, async (req, res) => {
       rows = rows.filter((r) => `${r.name || ''}`.toLowerCase().includes(search));
     }
 
-    res.json({ records: rows.map(normalizeRecordRow) });
+    const linesHistoryByRecordId = await fetchLatestAnnotationsMap(rows.map((row) => row.id));
+    res.json({
+      records: rows.map((row) => withLinesHistory(normalizeRecordRow(row), linesHistoryByRecordId.get(row.id) || []))
+    });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Records fetch failed' });
   }
@@ -551,8 +650,10 @@ app.get('/api/records/:id', requireAuth, async (req, res) => {
       .limit(1)
       .maybeSingle();
 
+    const latestLinesHistory = Array.isArray(latestAnnotation?.lines_history) ? latestAnnotation.lines_history : [];
+
     res.json({
-      record: normalizeRecordRow(data),
+      record: withLinesHistory(normalizeRecordRow(data), latestLinesHistory),
       latestAnnotation: latestAnnotation || null
     });
   } catch (error) {

@@ -196,6 +196,32 @@ async function uploadImageDataUrl(dataUrl, fileName, dateStr) {
     });
 }
 
+function extractAnnotationLines(latestAnnotation) {
+    if (!latestAnnotation) return null;
+    return Array.isArray(latestAnnotation.lines_history) ? cloneLines(latestAnnotation.lines_history) : [];
+}
+
+async function loadRecordDetail(record) {
+    if (!record?.id || !isServerRecordId(record.id)) {
+        return { record, linesHistory: Array.isArray(record?.linesHistory) ? cloneLines(record.linesHistory) : [] };
+    }
+
+    const detail = await apiRequest(`${API_RECORDS}/${record.id}`);
+    if (detail?.record) Object.assign(record, detail.record);
+
+    const annotationLines = extractAnnotationLines(detail?.latestAnnotation);
+    const linesHistory = annotationLines ?? (Array.isArray(record?.linesHistory) ? cloneLines(record.linesHistory) : []);
+    if (annotationLines !== null) {
+        record.linesHistory = linesHistory;
+    }
+    localRecordHashById.set(record.id, getLocalRecordHash(record));
+    if (annotationLines !== null) {
+        syncedLinesHashByRecordId.set(record.id, getLinesHistoryHash(record));
+    }
+
+    return { record, linesHistory };
+}
+
 function isServerRecordId(id) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(`${id || ''}`);
 }
@@ -746,7 +772,7 @@ function resetWorkspaceForNoRecord(message = '先に納品書を選択または�
     updateToolUI();
 }
 
-function deleteCurrentRecord() {
+async function deleteCurrentRecord() {
     if (!currentRecordId) {
         alert('削除する納品書が選択されていません。');
         return;
@@ -777,6 +803,11 @@ function deleteCurrentRecord() {
 
     records[idx] = updatedRecord;
     saveRecords(records);
+    try {
+        await persistPendingRecordChanges();
+    } catch (error) {
+        console.warn('Failed to sync soft delete immediately:', error);
+    }
     resetWorkspaceForNoRecord('納品書を削除一覧へ移動しました。');
     renderRecordsByDate();
     showUploadToast('<i class="fa-solid fa-box-archive"></i> 削除一覧へ移動しました。', 'success', 4000);
@@ -1016,13 +1047,24 @@ async function createRecordsFromFolder(files) {
     );
 }
 
-function openRecord(recordId) {
+async function openRecord(recordId) {
     autoSaveCurrentRecord();
     const record = getRecords().find((r) => r.id === recordId);
     if (!record) return;
 
     currentRecordId = record.id;
     updateRecordMetaUI(record);
+
+    let displayLinesHistory = Array.isArray(record.linesHistory) ? cloneLines(record.linesHistory) : [];
+
+    try {
+        const detail = await loadRecordDetail(record);
+        if (currentRecordId !== record.id) return;
+        displayLinesHistory = detail.linesHistory;
+        updateRecordMetaUI(record);
+    } catch (error) {
+        console.warn('Failed to load latest annotation:', error);
+    }
 
     let imageUrl = record.sourceUrl || '';
     if (!imageUrl && record.bgDataUrl) {
@@ -1050,9 +1092,10 @@ function openRecord(recordId) {
         }
 
         img.onload = () => {
+            if (currentRecordId !== record.id) return;
             rawSourceData = { type: 'image', data: img };
             currentRotation = normalizeRotationDeg(record.rotation);
-            initContainer(cloneLines(record.linesHistory));
+            initContainer(displayLinesHistory);
             renderRecordsByDate();
         };
 
@@ -1105,6 +1148,16 @@ function saveCurrentRecordMetaAndCanvas() {
 function autoSaveCurrentRecord() {
     if (!currentRecordId || !rawSourceData) return;
     saveCurrentRecordMetaAndCanvas();
+}
+
+async function persistPendingRecordChanges() {
+    autoSaveCurrentRecord();
+
+    for (let i = 0; i < 30; i++) {
+        await flushDirtyRecords();
+        if (!recordsSyncRunning && dirtyRecordIds.size === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+    }
 }
 
 function initContainer(initialLines = []) {
@@ -1446,8 +1499,12 @@ btnLogin.addEventListener('click', handleLogin);
 loginPassword.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleLogin();
 });
-btnHeaderLogout.addEventListener('click', () => {
-    autoSaveCurrentRecord();
+btnHeaderLogout.addEventListener('click', async () => {
+    try {
+        await persistPendingRecordChanges();
+    } catch (error) {
+        console.warn('Failed to persist pending changes before logout:', error);
+    }
     logout();
 });
 
@@ -1484,7 +1541,12 @@ window.addEventListener('pointercancel', (e) => {
     cancelSidebarGesture(e);
 }, { capture: true });
 
-btnOpenAdmin.addEventListener('click', () => {
+btnOpenAdmin.addEventListener('click', async () => {
+    try {
+        await persistPendingRecordChanges();
+    } catch (error) {
+        console.warn('Failed to persist pending changes before opening admin:', error);
+    }
     window.location.href = 'admin.html';
 });
 

@@ -65,6 +65,12 @@
                     </div>
 
                     <div class="sidebar-title">ユーザー一覧</div>
+                    <div class="admin-users-toolbar">
+                        <label class="admin-checkbox-row" for="toggle-show-inactive-users">
+                            <input id="toggle-show-inactive-users" type="checkbox">
+                            <span>inactive ユーザーを表示</span>
+                        </label>
+                    </div>
                     <div class="admin-table-header">
                         <div>ユーザー名</div>
                         <div>権限</div>
@@ -104,6 +110,7 @@
                             <div class="sidebar-title">納品書画像</div>
                             <div class="admin-record-preview">
                                 <img id="nohinsho-preview" alt="納品書プレビュー" />
+                                <canvas id="nohinsho-preview-canvas"></canvas>
                                 <div id="nohinsho-preview-empty" class="muted">納品書を選択してください。</div>
                             </div>
                             <div class="sidebar-title">詳細</div>
