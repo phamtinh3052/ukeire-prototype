@@ -12,8 +12,9 @@ const API_UPLOADS = '/api/uploads';
 
 const adminStatus = document.getElementById('admin-status');
 const adminToast = document.getElementById('admin-toast');
-const adminLoading = document.getElementById('admin-loading');
-const adminLoadingText = document.getElementById('admin-loading-text');
+const usersLoading = document.getElementById('users-loading');
+const nohinshoListLoading = document.getElementById('nohinsho-list-loading');
+const nohinshoPreviewLoading = document.getElementById('nohinsho-preview-loading');
 const usersTable = document.getElementById('users-table');
 const toggleShowInactiveUsers = document.getElementById('toggle-show-inactive-users');
 const newUsernameInput = document.getElementById('new-username');
@@ -52,7 +53,11 @@ let activeAdminTab = 'users';
 let selectedRecordId = null;
 let showInactiveUsers = false;
 let adminToastTimeout = null;
-let adminLoadingCounter = 0;
+const loadingCounter = {
+    users: 0,
+    nohinshoList: 0,
+    preview: 0
+};
 
 const DEFAULT_STORE_DATA = {
     [USERS_KEY]: [],
@@ -133,20 +138,33 @@ function showAdminToast(message, type = 'info', autoDismiss = 3500) {
     }
 }
 
-function setAdminLoading(isLoading, message = 'データを読み込み中...') {
-    if (!adminLoading) return;
+function setBlockLoading(element, counterKey, isLoading, message = '') {
+    if (!element || !counterKey || !(counterKey in loadingCounter)) return;
 
     if (isLoading) {
-        adminLoadingCounter += 1;
-        adminLoading.classList.remove('hidden');
-        if (adminLoadingText) adminLoadingText.textContent = message;
+        loadingCounter[counterKey] += 1;
+        const textEl = element.querySelector('.admin-loading-text');
+        if (textEl && message) textEl.textContent = message;
+        element.classList.remove('hidden');
         return;
     }
 
-    adminLoadingCounter = Math.max(0, adminLoadingCounter - 1);
-    if (adminLoadingCounter === 0) {
-        adminLoading.classList.add('hidden');
+    loadingCounter[counterKey] = Math.max(0, loadingCounter[counterKey] - 1);
+    if (loadingCounter[counterKey] === 0) {
+        element.classList.add('hidden');
     }
+}
+
+function setUsersLoading(isLoading, message = 'ユーザー一覧を読み込み中...') {
+    setBlockLoading(usersLoading, 'users', isLoading, message);
+}
+
+function setNohinshoListLoading(isLoading, message = '納品書一覧を読み込み中...') {
+    setBlockLoading(nohinshoListLoading, 'nohinshoList', isLoading, message);
+}
+
+function setPreviewLoading(isLoading, message = '納品書を読み込み中...') {
+    setBlockLoading(nohinshoPreviewLoading, 'preview', isLoading, message);
 }
 
 function isServerRecordId(id) {
@@ -322,14 +340,14 @@ function saveUsers(users) {
 }
 
 async function refreshUsers() {
-    setAdminLoading(true, 'ユーザー一覧を読み込み中...');
+    setUsersLoading(true, 'ユーザー一覧を読み込み中...');
     try {
         const query = showInactiveUsers ? '?includeInactive=true' : '';
         const usersPayload = await apiRequest(`${API_USERS}${query}`);
         saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
         renderUsers();
     } finally {
-        setAdminLoading(false);
+        setUsersLoading(false);
     }
 }
 
@@ -712,7 +730,7 @@ function renderPreviewCanvas(imageUrl, linesHistory = []) {
         return;
     }
 
-    setAdminLoading(true, '納品書画像を読み込み中...');
+    setPreviewLoading(true, '納品書画像を読み込み中...');
     const img = new Image();
     img.onload = () => {
         try {
@@ -748,13 +766,13 @@ function renderPreviewCanvas(imageUrl, linesHistory = []) {
             nohinshoPreview.style.display = 'none';
             nohinshoPreviewEmpty.style.display = 'none';
         } finally {
-            setAdminLoading(false);
+            setPreviewLoading(false);
         }
     };
 
     img.onerror = () => {
         setPreviewImage(imageUrl);
-        setAdminLoading(false);
+        setPreviewLoading(false);
     };
 
     img.src = imageUrl;
@@ -776,7 +794,7 @@ async function openNohinshoRecord(recordId) {
         return;
     }
 
-    setAdminLoading(true, '納品書データを読み込み中...');
+    setPreviewLoading(true, '納品書データを読み込み中...');
     let linesHistory = Array.isArray(record.linesHistory) ? JSON.parse(JSON.stringify(record.linesHistory)) : [];
 
     try {
@@ -786,7 +804,7 @@ async function openNohinshoRecord(recordId) {
     } catch (error) {
         console.warn('Failed to load latest annotation for admin preview:', error);
     } finally {
-        setAdminLoading(false);
+        setPreviewLoading(false);
     }
 
     nohinshoNameInput.value = record.name || '';
@@ -952,6 +970,7 @@ async function purgeSoftDeletedRecords() {
             method: 'DELETE'
         });
 
+        setNohinshoListLoading(true, '納品書一覧を更新中...');
         const recordsPayload = await apiRequest(`${API_RECORDS}?includeDeleted=true`);
         saveRecords(recordsPayload?.records || []);
         cacheRecordHashes(storeData[RECORDS_KEY]);
@@ -965,12 +984,14 @@ async function purgeSoftDeletedRecords() {
     } catch (error) {
         showAdminToast(`完全削除失敗: ${error.message || 'network error'}`, 'error', 3000);
     } finally {
+        setNohinshoListLoading(false);
         btnNohinshoPurgeDeleted.disabled = false;
     }
 }
 
 async function boot() {
-    setAdminLoading(true, '管理データを読み込み中...');
+    setUsersLoading(true, 'ユーザー一覧を読み込み中...');
+    setNohinshoListLoading(true, '納品書一覧を読み込み中...');
     try {
         const me = await apiRequest(API_AUTH_ME);
         currentSessionUser = me?.user || null;
@@ -984,7 +1005,8 @@ async function boot() {
         setAuthToken('');
         currentSessionUser = null;
     } finally {
-        setAdminLoading(false);
+        setUsersLoading(false);
+        setNohinshoListLoading(false);
     }
 
     const sessionUser = getSessionUser();

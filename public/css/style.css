@@ -528,32 +528,35 @@ button:disabled {
     padding: 16px;
 }
 
-.admin-loading-overlay {
-    position: fixed;
+.admin-block-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fafafa;
+    margin-bottom: 8px;
+}
+
+.admin-preview-loading {
+    position: absolute;
     inset: 0;
-    z-index: 2000;
+    z-index: 2;
+    margin: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(1px);
+    border: 0;
+    background: rgba(255, 255, 255, 0.9);
 }
 
-.admin-loading-overlay.hidden {
+.admin-preview-loading.hidden {
     display: none !important;
 }
 
-.admin-loading-card {
-    min-width: 220px;
-    max-width: 90vw;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-    padding: 12px 14px;
+.admin-block-loading.hidden {
+    display: none !important;
 }
 
 .admin-spinner {
