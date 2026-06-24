@@ -33,58 +33,8 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch strategy:
-//   - Local files   → cache-first
-//   - CDN (pdf.js, font-awesome, ...) → network-first, cache as fallback
+// Fetch: pass-through only (caching disabled temporarily)
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-
-  const url = new URL(event.request.url);
-  const isLocal = url.origin === self.location.origin;
-  const pathname = url.pathname || '';
-  const isHtmlOrJs = pathname.endsWith('.html') || pathname.endsWith('.js') || pathname === '/' || pathname === '';
-
-  if (isLocal) {
-    // Network-first cho HTML/JS để tránh stale code sau deploy/update.
-    // Các local assets còn lại dùng cache-first.
-    if (isHtmlOrJs) {
-      event.respondWith(
-        fetch(event.request)
-          .then(response => {
-            if (response && response.status === 200) {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-            }
-            return response;
-          })
-          .catch(() => caches.match(event.request))
-      );
-    } else {
-      event.respondWith(
-        caches.match(event.request).then(cached => {
-          if (cached) return cached;
-          return fetch(event.request).then(response => {
-            if (response && response.status === 200) {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-            }
-            return response;
-          });
-        })
-      );
-    }
-  } else {
-    // Network-first cho CDN, fallback về cache khi offline
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
-  }
+  event.respondWith(fetch(event.request));
 });

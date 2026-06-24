@@ -49,9 +49,20 @@ const btnUploadFolder = document.getElementById('btn-upload-folder');
 const recordNameInput = document.getElementById('record-name');
 const recordStatusInput = document.getElementById('record-status');
 const btnSaveRecord = document.getElementById('btn-save-record');
+const btnEditRecord = document.getElementById('btn-edit-record');
 const btnDeleteRecord = document.getElementById('btn-delete-record');
 const filterDateInput = document.getElementById('filter-date');
 const btnFilterToday = document.getElementById('btn-filter-today');
+const recordSliderModeSelect = document.getElementById('record-slider-mode');
+const btnRecordPrev = document.getElementById('btn-record-prev');
+const btnRecordNext = document.getElementById('btn-record-next');
+const recordSliderPosition = document.getElementById('record-slider-position');
+const mainRecordSliderModeSelect = document.getElementById('main-record-slider-mode');
+const mainBtnRecordPrev = document.getElementById('main-btn-record-prev');
+const mainBtnRecordNext = document.getElementById('main-btn-record-next');
+const mainRecordSliderPosition = document.getElementById('main-record-slider-position');
+const mainBtnEditRecord = document.getElementById('main-btn-edit-record');
+const mainBtnSaveRecord = document.getElementById('main-btn-save-record');
 const recordsList = document.getElementById('records-list');
 
 let currentUser = null;
@@ -91,6 +102,10 @@ let sidebarGestureLastX = 0;
 let sidebarGesturePointerId = null;
 let sidebarGestureStartValue = 0;
 let sidebarGestureCurrentValue = 0;
+
+let recordSliderMode = 'unchecked';
+const recordSliderIndexByMode = { unchecked: 0, done: 0 };
+let doneRecordEditEnabled = false;
 
 const DEFAULT_STORE_DATA = {
     [RECORDS_KEY]: []
@@ -565,7 +580,13 @@ function showAppForUser(user) {
     btnOpenAdmin.style.display = user.role === 'admin' ? 'block' : 'none';
 
     filterDateInput.value = pickDefaultFilterDate(getRecords());
+    recordSliderMode = 'unchecked';
+    recordSliderModeSelect.value = 'unchecked';
+    recordSliderIndexByMode.unchecked = 0;
+    recordSliderIndexByMode.done = 0;
+    doneRecordEditEnabled = false;
     renderRecordsByDate();
+    openCurrentSliderRecord();
     updateToolUI();
 }
 
@@ -654,47 +675,102 @@ function getRecordStatusClass(status) {
     return 'unchecked';
 }
 
-function buildRecordSection(title, records) {
-    const section = document.createElement('section');
-    section.className = 'record-section';
+function getRecordsForSelectedDate() {
+    const selectedDate = filterDateInput.value || todayDateString();
+    return getRecords()
+        .filter((r) => r.date === selectedDate && !r.isDeleted)
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
 
-    const heading = document.createElement('div');
-    heading.className = 'record-section-title';
-    heading.textContent = `${title} (${records.length})`;
-    section.appendChild(heading);
+function getRecordGroupsForSlider() {
+    const all = getRecordsForSelectedDate();
+    const unchecked = [];
+    const done = [];
 
-    const grid = document.createElement('div');
-    grid.className = 'record-section-grid';
+    all.forEach((record) => {
+        const status = normalizeRecordStatus(record);
+        if (status === 'done') done.push(record);
+        else unchecked.push(record);
+    });
 
-    if (records.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'muted';
-        empty.textContent = '該当なし';
-        grid.appendChild(empty);
-    } else {
-        records.forEach((record) => {
-            const status = normalizeRecordStatus(record);
-            const uploadStatus = getEffectiveUploadStatus(record);
-            const item = document.createElement('div');
-            item.className = `record-item ${getRecordStatusClass(status)} ${record.id === currentRecordId ? 'active' : ''}`;
-            const uploadBadge = uploadStatus === 'uploading'
-                ? '<div class="meta"><span class="upload-badge badge-uploading">\u2601 アップロード中</span></div>'
-                : uploadStatus === 'failed'
-                ? '<div class="meta"><span class="upload-badge badge-failed">&#9888; アップロード失敗</span></div>'
-                : '';
-            item.innerHTML = `
-                <div class="title">${record.name}</div>
-                <div class="meta">日付: ${formatRecordDate(record.date)}</div>
-                <div class="meta">状態: ${getRecordStatusLabel(status)}</div>
-                ${uploadBadge}
-            `;
-            item.addEventListener('click', () => openRecord(record.id));
-            grid.appendChild(item);
-        });
+    return { unchecked, done };
+}
+
+function setCurrentSliderIndexByRecordId(recordId) {
+    const groups = getRecordGroupsForSlider();
+    const modeRecords = groups[recordSliderMode] || [];
+    const idx = modeRecords.findIndex((r) => r.id === recordId);
+    if (idx >= 0) recordSliderIndexByMode[recordSliderMode] = idx;
+}
+
+function getCurrentRecord() {
+    if (!currentRecordId) return null;
+    return getRecords().find((r) => r.id === currentRecordId) || null;
+}
+
+function isCurrentRecordEditable() {
+    const record = getCurrentRecord();
+    if (!record) return false;
+    const status = normalizeRecordStatus(record);
+    if (status !== 'done') return true;
+    return doneRecordEditEnabled;
+}
+
+function syncWorkflowModeSelectors() {
+    recordSliderModeSelect.value = recordSliderMode;
+    if (mainRecordSliderModeSelect) mainRecordSliderModeSelect.value = recordSliderMode;
+}
+
+function updateRecordControlsState() {
+    const record = getCurrentRecord();
+    const status = normalizeRecordStatus(record);
+    const isDone = status === 'done';
+    const isLockedDone = isDone && !doneRecordEditEnabled;
+    const hasRecord = !!record;
+
+    const showEdit = recordSliderMode === 'done' && isDone && hasRecord;
+    btnEditRecord.classList.toggle('hidden', !showEdit);
+    if (mainBtnEditRecord) mainBtnEditRecord.classList.toggle('hidden', !showEdit);
+
+    btnSaveRecord.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span class="sidebar-label">保存して次へ</span>';
+    if (mainBtnSaveRecord) {
+        mainBtnSaveRecord.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span>保存して次へ</span>';
     }
 
-    section.appendChild(grid);
-    return section;
+    recordNameInput.disabled = !hasRecord || isLockedDone;
+    recordStatusInput.disabled = !hasRecord || recordSliderMode === 'done' || isLockedDone;
+    btnSaveRecord.disabled = !hasRecord || (recordSliderMode === 'done' && !doneRecordEditEnabled);
+    if (mainBtnSaveRecord) {
+        mainBtnSaveRecord.disabled = btnSaveRecord.disabled;
+    }
+    if (mainBtnEditRecord) {
+        mainBtnEditRecord.disabled = !showEdit;
+    }
+
+    const lockEditTools = !hasRecord || isLockedDone;
+    ['btn-brush', 'btn-eraser', 'btn-crop', 'btn-undo', 'btn-clear'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = lockEditTools;
+    });
+}
+
+function renderSliderRecordCard(record) {
+    const status = normalizeRecordStatus(record);
+    const uploadStatus = getEffectiveUploadStatus(record);
+    const item = document.createElement('div');
+    item.className = `record-item ${getRecordStatusClass(status)} active`;
+    const uploadBadge = uploadStatus === 'uploading'
+        ? '<div class="meta"><span class="upload-badge badge-uploading">\u2601 アップロード中</span></div>'
+        : uploadStatus === 'failed'
+        ? '<div class="meta"><span class="upload-badge badge-failed">&#9888; アップロード失敗</span></div>'
+        : '';
+    item.innerHTML = `
+        <div class="title">${record.name}</div>
+        <div class="meta">日付: ${formatRecordDate(record.date)}</div>
+        <div class="meta">状態: ${getRecordStatusLabel(status)}</div>
+        ${uploadBadge}
+    `;
+    return item;
 }
 
 function initButtonTooltips() {
@@ -708,32 +784,40 @@ function initButtonTooltips() {
 }
 
 function renderRecordsByDate() {
-    const selectedDate = filterDateInput.value || todayDateString();
-    const records = getRecords()
-        .filter((r) => r.date === selectedDate && !r.isDeleted)
-        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    syncWorkflowModeSelectors();
+    const groups = getRecordGroupsForSlider();
+    const modeRecords = groups[recordSliderMode] || [];
+
+    if (currentRecordId) {
+        const currentIdx = modeRecords.findIndex((r) => r.id === currentRecordId);
+        if (currentIdx >= 0) recordSliderIndexByMode[recordSliderMode] = currentIdx;
+    }
+
+    const count = modeRecords.length;
+    let index = recordSliderIndexByMode[recordSliderMode] || 0;
+    if (index < 0) index = 0;
+    if (count > 0 && index > count - 1) index = count - 1;
+    recordSliderIndexByMode[recordSliderMode] = index;
+
+    recordSliderPosition.textContent = `${count === 0 ? 0 : index + 1} / ${count}`;
+    btnRecordPrev.disabled = count <= 1;
+    btnRecordNext.disabled = count <= 1;
+    if (mainRecordSliderPosition) mainRecordSliderPosition.textContent = recordSliderPosition.textContent;
+    if (mainBtnRecordPrev) mainBtnRecordPrev.disabled = btnRecordPrev.disabled;
+    if (mainBtnRecordNext) mainBtnRecordNext.disabled = btnRecordNext.disabled;
 
     recordsList.innerHTML = '';
 
-    if (records.length === 0) {
-        recordsList.innerHTML = '<div class="muted">この日の納品書はありません。</div>';
+    if (count === 0) {
+        const modeLabel = recordSliderMode === 'unchecked' ? '未チェック' : '確認完了';
+        recordsList.innerHTML = `<div class="muted">${modeLabel}の納品書はありません。</div>`;
+        updateRecordControlsState();
         return;
     }
 
-    const notCheckedRecords = [];
-    const doneRecords = [];
-
-    records.forEach((record) => {
-        const status = normalizeRecordStatus(record);
-        if (status === 'done') {
-            doneRecords.push(record);
-        } else {
-            notCheckedRecords.push(record);
-        }
-    });
-
-    recordsList.appendChild(buildRecordSection('未チェック', notCheckedRecords));
-    recordsList.appendChild(buildRecordSection('確認完了', doneRecords));
+    const active = modeRecords[index];
+    recordsList.appendChild(renderSliderRecordCard(active));
+    updateRecordControlsState();
 }
 
 function updateRecordMetaUI(record) {
@@ -745,6 +829,7 @@ function updateRecordMetaUI(record) {
 
     recordNameInput.value = record.name || '';
     recordStatusInput.value = normalizeRecordStatus(record);
+    updateRecordControlsState();
 }
 
 function resetWorkspaceForNoRecord(message = '先に納品書を選択またはアップロードしてください') {
@@ -810,6 +895,7 @@ async function deleteCurrentRecord() {
     }
     resetWorkspaceForNoRecord('納品書を削除一覧へ移動しました。');
     renderRecordsByDate();
+    await openCurrentSliderRecord();
     showUploadToast('<i class="fa-solid fa-box-archive"></i> 削除一覧へ移動しました。', 'success', 4000);
 }
 
@@ -1053,6 +1139,8 @@ async function openRecord(recordId) {
     if (!record) return;
 
     currentRecordId = record.id;
+    setCurrentSliderIndexByRecordId(record.id);
+    doneRecordEditEnabled = false;
     updateRecordMetaUI(record);
 
     let displayLinesHistory = Array.isArray(record.linesHistory) ? cloneLines(record.linesHistory) : [];
@@ -1158,6 +1246,117 @@ async function persistPendingRecordChanges() {
         if (!recordsSyncRunning && dirtyRecordIds.size === 0) return;
         await new Promise((resolve) => setTimeout(resolve, 120));
     }
+}
+
+async function openCurrentSliderRecord() {
+    const groups = getRecordGroupsForSlider();
+    const modeRecords = groups[recordSliderMode] || [];
+    if (modeRecords.length === 0) {
+        currentRecordId = null;
+        resetWorkspaceForNoRecord('対象の納品書がありません。');
+        renderRecordsByDate();
+        return;
+    }
+
+    let index = recordSliderIndexByMode[recordSliderMode] || 0;
+    if (index < 0) index = 0;
+    if (index > modeRecords.length - 1) index = modeRecords.length - 1;
+    recordSliderIndexByMode[recordSliderMode] = index;
+
+    await openRecord(modeRecords[index].id);
+}
+
+async function moveSliderRecord(direction) {
+    const groups = getRecordGroupsForSlider();
+    const modeRecords = groups[recordSliderMode] || [];
+    if (modeRecords.length === 0) return;
+
+    const current = recordSliderIndexByMode[recordSliderMode] || 0;
+    let next = current + direction;
+    if (next < 0) next = 0;
+    if (next > modeRecords.length - 1) next = modeRecords.length - 1;
+    if (next === current) return;
+
+    recordSliderIndexByMode[recordSliderMode] = next;
+    await openRecord(modeRecords[next].id);
+}
+
+async function handleSaveRecordAction() {
+    const current = getCurrentRecord();
+    if (!current) {
+        showUploadToast('<i class="fa-solid fa-circle-info"></i> 納品書を選択してください。', 'error', 2500);
+        return;
+    }
+
+    const beforeIndex = recordSliderIndexByMode[recordSliderMode] || 0;
+
+    if (recordSliderMode === 'done' && !doneRecordEditEnabled) {
+        showUploadToast('<i class="fa-solid fa-pen-to-square"></i> 先に「編集」を押してください。', 'info', 2500);
+        return;
+    }
+
+    if (recordSliderMode === 'unchecked') {
+        recordStatusInput.value = 'done';
+    }
+
+    saveCurrentRecordMetaAndCanvas();
+
+    const records = getRecords();
+    const idx = records.findIndex((r) => r.id === current.id);
+    if (idx >= 0) {
+        if (recordSliderMode === 'unchecked') {
+            records[idx].status = 'done';
+            records[idx].checked = true;
+        }
+        records[idx].updatedAt = new Date().toISOString();
+        saveRecords(records);
+    }
+
+    doneRecordEditEnabled = false;
+    renderRecordsByDate();
+
+    if (recordSliderMode === 'unchecked') {
+        const groups = getRecordGroupsForSlider();
+        const list = groups.unchecked || [];
+        if (list.length === 0) {
+            resetWorkspaceForNoRecord('未チェックの納品書はありません。');
+            showUploadToast('<i class="fa-solid fa-circle-check"></i> 保存して確認完了にしました。', 'success', 2500);
+            return;
+        }
+        const nextIndex = Math.min(beforeIndex, list.length - 1);
+        recordSliderIndexByMode.unchecked = nextIndex;
+        showUploadToast('<i class="fa-solid fa-circle-check"></i> 保存して次の未チェックへ移動します。', 'success', 2500);
+        await openRecord(list[nextIndex].id);
+        return;
+    }
+
+    const doneGroups = getRecordGroupsForSlider();
+    const doneList = doneGroups.done || [];
+    if (doneList.length === 0) {
+        resetWorkspaceForNoRecord('確認完了の納品書はありません。');
+        return;
+    }
+
+    const nextDoneIndex = Math.min(beforeIndex + 1, doneList.length - 1);
+    recordSliderIndexByMode.done = nextDoneIndex;
+    showUploadToast('<i class="fa-solid fa-circle-check"></i> 保存して次の確認完了へ移動します。', 'success', 2500);
+    await openRecord(doneList[nextDoneIndex].id);
+}
+
+function enableDoneRecordEditMode() {
+    const record = getCurrentRecord();
+    if (!record) return;
+    if (normalizeRecordStatus(record) !== 'done') return;
+    doneRecordEditEnabled = true;
+    updateRecordControlsState();
+    showUploadToast('<i class="fa-solid fa-pen-to-square"></i> 編集モードを有効にしました。', 'info', 2500);
+}
+
+async function setSliderModeAndOpen(mode) {
+    recordSliderMode = mode === 'done' ? 'done' : 'unchecked';
+    doneRecordEditEnabled = false;
+    renderRecordsByDate();
+    await openCurrentSliderRecord();
 }
 
 function initContainer(initialLines = []) {
@@ -1355,6 +1554,10 @@ function cancelCropSelection() {
 }
 
 function applyCrop() {
+    if (!isCurrentRecordEditable()) {
+        showUploadToast('<i class="fa-solid fa-lock"></i> この納品書は「編集」を押してから変更してください。', 'info', 2500);
+        return;
+    }
     if (!cropRect || cropRect.w < 5 || cropRect.h < 5) return;
     const { x, y, w, h } = cropRect;
 
@@ -1558,24 +1761,49 @@ folderInput.addEventListener('change', async (e) => {
     folderInput.value = '';
 });
 
-recordStatusInput.addEventListener('change', saveCurrentRecordMetaAndCanvas);
-btnSaveRecord.addEventListener('click', () => {
+recordStatusInput.addEventListener('change', () => {
+    if (!isCurrentRecordEditable()) {
+        const current = getCurrentRecord();
+        recordStatusInput.value = normalizeRecordStatus(current);
+        showUploadToast('<i class="fa-solid fa-lock"></i> この納品書は編集モードでのみ変更できます。', 'info', 2200);
+        return;
+    }
     saveCurrentRecordMetaAndCanvas();
-    alert('保存しました。');
 });
+btnSaveRecord.addEventListener('click', handleSaveRecordAction);
+if (mainBtnSaveRecord) mainBtnSaveRecord.addEventListener('click', handleSaveRecordAction);
+btnEditRecord.addEventListener('click', enableDoneRecordEditMode);
+if (mainBtnEditRecord) mainBtnEditRecord.addEventListener('click', enableDoneRecordEditMode);
 btnDeleteRecord.addEventListener('click', deleteCurrentRecord);
 
-filterDateInput.addEventListener('change', () => {
+recordSliderModeSelect.addEventListener('change', async (e) => {
+    await setSliderModeAndOpen(e.target.value);
+});
+if (mainRecordSliderModeSelect) {
+    mainRecordSliderModeSelect.addEventListener('change', async (e) => {
+        await setSliderModeAndOpen(e.target.value);
+    });
+}
+btnRecordPrev.addEventListener('click', () => moveSliderRecord(-1));
+btnRecordNext.addEventListener('click', () => moveSliderRecord(1));
+if (mainBtnRecordPrev) mainBtnRecordPrev.addEventListener('click', () => moveSliderRecord(-1));
+if (mainBtnRecordNext) mainBtnRecordNext.addEventListener('click', () => moveSliderRecord(1));
+
+filterDateInput.addEventListener('change', async () => {
     autoSaveCurrentRecord();
     currentRecordId = null;
+    doneRecordEditEnabled = false;
     renderRecordsByDate();
+    await openCurrentSliderRecord();
 });
 
-btnFilterToday.addEventListener('click', () => {
+btnFilterToday.addEventListener('click', async () => {
     filterDateInput.value = todayDateString();
     autoSaveCurrentRecord();
     currentRecordId = null;
+    doneRecordEditEnabled = false;
     renderRecordsByDate();
+    await openCurrentSliderRecord();
 });
 
 document.getElementById('btn-pan').addEventListener('click', () => setTool('pan'));
@@ -1588,12 +1816,20 @@ document.getElementById('btn-zoom-in').addEventListener('click', () => zoom(0.1)
 document.getElementById('btn-zoom-out').addEventListener('click', () => zoom(-0.1));
 document.getElementById('btn-zoom-fit').addEventListener('click', resetToFit);
 document.getElementById('btn-rotate-cw').addEventListener('click', () => {
+    if (!isCurrentRecordEditable()) {
+        showUploadToast('<i class="fa-solid fa-lock"></i> この納品書は編集モードでのみ変更できます。', 'info', 2500);
+        return;
+    }
     currentRotation = normalizeRotationDeg(currentRotation + 90);
     applyTransform();
     autoSaveCurrentRecord();
 });
 
 document.getElementById('btn-undo').addEventListener('click', () => {
+    if (!isCurrentRecordEditable()) {
+        showUploadToast('<i class="fa-solid fa-lock"></i> この納品書は編集モードでのみ変更できます。', 'info', 2500);
+        return;
+    }
     if (linesHistory.length > 0) {
         linesHistory.pop();
         stopDrawing();
@@ -1602,6 +1838,10 @@ document.getElementById('btn-undo').addEventListener('click', () => {
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
+    if (!isCurrentRecordEditable()) {
+        showUploadToast('<i class="fa-solid fa-lock"></i> この納品書は編集モードでのみ変更できます。', 'info', 2500);
+        return;
+    }
     if (linesHistory.length > 0 && confirm('すべて削除しますか？')) {
         linesHistory = [];
         stopDrawing();
@@ -1696,6 +1936,11 @@ workspace.addEventListener('pointercancel', endPan);
 paintCanvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || isPinching || workspacePointers.size > 1) return;
     updateEraserIndicatorPosition(e);
+
+    if (!isCurrentRecordEditable()) {
+        showUploadToast('<i class="fa-solid fa-lock"></i> 「編集」を押すとこの画像を修正できます。', 'info', 2200);
+        return;
+    }
 
     if (currentTool === 'crop') {
         isCropping = true;

@@ -65,6 +65,15 @@
                     <input id="filter-date" type="date">
                     <button id="btn-filter-today"><i class="fa-solid fa-calendar-day"></i></button>
                 </div>
+                <div class="records-slider-toolbar">
+                    <select id="record-slider-mode" title="表示モード">
+                        <option value="unchecked">未チェック</option>
+                        <option value="done">確認完了</option>
+                    </select>
+                    <button id="btn-record-prev" type="button" title="前へ"><i class="fa-solid fa-chevron-left"></i></button>
+                    <div id="record-slider-position" class="record-slider-position">0 / 0</div>
+                    <button id="btn-record-next" type="button" title="次へ"><i class="fa-solid fa-chevron-right"></i></button>
+                </div>
                 <div id="records-list" class="records-list"></div>
             </div>
 
@@ -77,6 +86,7 @@
                         <option value="done">確認完了</option>
                     </select>
                 </label>
+                <button id="btn-edit-record" class="hidden"><i class="fa-solid fa-pen-to-square"></i><span class="sidebar-label">編集</span></button>
                 <button id="btn-save-record"><i class="fa-solid fa-floppy-disk"></i><span class="sidebar-label">保存</span></button>
                 <button id="btn-delete-record" class="btn-danger"><i class="fa-solid fa-trash-can"></i><span class="sidebar-label">現在の納品書を削除</span></button>
             </div>
@@ -116,6 +126,18 @@
                     <button id="btn-crop-apply" class="btn-crop"><i class="fa-solid fa-check"></i><span>切り抜きを適用</span></button>
                     <button id="btn-crop-cancel"><i class="fa-solid fa-xmark"></i><span>選択をキャンセル</span></button>
                 </div>
+            </div>
+
+            <div class="canvas-record-workflow">
+                <select id="main-record-slider-mode" title="表示モード">
+                    <option value="unchecked">未チェック</option>
+                    <option value="done">確認完了</option>
+                </select>
+                <button id="main-btn-record-prev" type="button" title="前へ"><i class="fa-solid fa-chevron-left"></i></button>
+                <div id="main-record-slider-position" class="record-slider-position">0 / 0</div>
+                <button id="main-btn-record-next" type="button" title="次へ"><i class="fa-solid fa-chevron-right"></i></button>
+                <button id="main-btn-edit-record" class="hidden" type="button"><i class="fa-solid fa-pen-to-square"></i><span>編集</span></button>
+                <button id="main-btn-save-record" type="button" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i><span>保存して次へ</span></button>
             </div>
 
             <div id="workspace" class="pan-mode">

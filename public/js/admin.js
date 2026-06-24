@@ -11,6 +11,9 @@ const API_UPLOADS = '/api/uploads';
 
 
 const adminStatus = document.getElementById('admin-status');
+const adminToast = document.getElementById('admin-toast');
+const adminLoading = document.getElementById('admin-loading');
+const adminLoadingText = document.getElementById('admin-loading-text');
 const usersTable = document.getElementById('users-table');
 const toggleShowInactiveUsers = document.getElementById('toggle-show-inactive-users');
 const newUsernameInput = document.getElementById('new-username');
@@ -48,6 +51,8 @@ const nohinshoFolderInput = document.getElementById('nohinsho-folder-input');
 let activeAdminTab = 'users';
 let selectedRecordId = null;
 let showInactiveUsers = false;
+let adminToastTimeout = null;
+let adminLoadingCounter = 0;
 
 const DEFAULT_STORE_DATA = {
     [USERS_KEY]: [],
@@ -114,6 +119,34 @@ function setAuthToken(token) {
     authToken = token || '';
     if (authToken) localStorage.setItem(AUTH_TOKEN_KEY, authToken);
     else localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function showAdminToast(message, type = 'info', autoDismiss = 3500) {
+    if (!adminToast) return;
+    adminToast.className = `upload-toast toast-${type}`;
+    adminToast.innerHTML = `<span style="flex:1">${message}</span>` +
+        `<button onclick="document.getElementById('admin-toast').classList.add('hidden')" ` +
+        `style="background:none;border:none;cursor:pointer;padding:0 0 0 10px;color:inherit;font-size:1.3em;line-height:1;" title="閉じる">×</button>`;
+    if (adminToastTimeout) clearTimeout(adminToastTimeout);
+    if (autoDismiss > 0) {
+        adminToastTimeout = setTimeout(() => adminToast.classList.add('hidden'), autoDismiss);
+    }
+}
+
+function setAdminLoading(isLoading, message = 'データを読み込み中...') {
+    if (!adminLoading) return;
+
+    if (isLoading) {
+        adminLoadingCounter += 1;
+        adminLoading.classList.remove('hidden');
+        if (adminLoadingText) adminLoadingText.textContent = message;
+        return;
+    }
+
+    adminLoadingCounter = Math.max(0, adminLoadingCounter - 1);
+    if (adminLoadingCounter === 0) {
+        adminLoading.classList.add('hidden');
+    }
 }
 
 function isServerRecordId(id) {
@@ -289,10 +322,15 @@ function saveUsers(users) {
 }
 
 async function refreshUsers() {
-    const query = showInactiveUsers ? '?includeInactive=true' : '';
-    const usersPayload = await apiRequest(`${API_USERS}${query}`);
-    saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
-    renderUsers();
+    setAdminLoading(true, 'ユーザー一覧を読み込み中...');
+    try {
+        const query = showInactiveUsers ? '?includeInactive=true' : '';
+        const usersPayload = await apiRequest(`${API_USERS}${query}`);
+        saveUsers((usersPayload?.users || []).map((u) => ({ ...u, password: '' })));
+        renderUsers();
+    } finally {
+        setAdminLoading(false);
+    }
 }
 
 function getRecords() {
@@ -383,7 +421,7 @@ async function createUser() {
     const brushColor = newBrushColorInput.value;
 
     if (!username || !password) {
-        alert('ユーザー名とパスワードを入力してください。');
+        showAdminToast('ユーザー名とパスワードを入力してください。', 'error');
         return;
     }
 
@@ -399,9 +437,9 @@ async function createUser() {
         newRoleInput.value = 'user';
         newBrushColorInput.value = '#ff0000';
         await refreshUsers();
-        setAdminMessage('ユーザーを追加しました。');
+        showAdminToast('ユーザーを追加しました。', 'success', 3000);
     } catch (error) {
-        alert(`ユーザー追加失敗: ${error.message || 'network error'}`);
+        showAdminToast(`ユーザー追加失敗: ${error.message || 'network error'}`, 'error', 3000);
     }
 }
 
@@ -448,7 +486,7 @@ function renderUsers() {
             if (idx < 0) return;
 
             if (list[idx].role === 'admin' && role !== 'admin' && countAdmins(list) <= 1) {
-                alert('最後のadminは変更できません。');
+                showAdminToast('最後のadminは変更できません。', 'error');
                 return;
             }
 
@@ -463,9 +501,9 @@ function renderUsers() {
 
                 list[idx] = { ...list[idx], ...result.user, password: '' };
                 await refreshUsers();
-                setAdminMessage('ユーザーを更新しました。');
+                showAdminToast('ユーザーを更新しました。', 'success', 3000);
             } catch (error) {
-                alert(`ユーザー更新失敗: ${error.message || 'network error'}`);
+                showAdminToast(`ユーザー更新失敗: ${error.message || 'network error'}`, 'error', 3000);
             }
         });
     });
@@ -481,7 +519,7 @@ function renderUsers() {
             if (!target) return;
 
             if (target.role === 'admin' && countAdmins(list) <= 1) {
-                alert('最後のadminは削除できません。');
+                showAdminToast('最後のadminは削除できません。', 'error');
                 return;
             }
 
@@ -490,9 +528,9 @@ function renderUsers() {
             try {
                 await apiRequest(`${API_USERS}/${id}`, { method: 'DELETE' });
                 await refreshUsers();
-                setAdminMessage('ユーザーを削除しました。');
+                showAdminToast('ユーザーを削除しました。', 'success', 3000);
             } catch (error) {
-                alert(`ユーザー削除失敗: ${error.message || 'network error'}`);
+                showAdminToast(`ユーザー削除失敗: ${error.message || 'network error'}`, 'error', 3000);
             }
         });
     });
@@ -641,31 +679,31 @@ function setPreviewImage(imageUrl) {
     nohinshoPreview.src = imageUrl;
 }
 
-function drawLinesOnPreview(linesHistory) {
+function drawLinesOnPreview(targetCtx, linesHistory) {
     (Array.isArray(linesHistory) ? linesHistory : []).forEach((line) => {
         if (!Array.isArray(line?.points) || line.points.length < 1) return;
 
-        nohinshoPreviewCtx.beginPath();
-        nohinshoPreviewCtx.lineWidth = line.width;
-        nohinshoPreviewCtx.lineCap = 'round';
-        nohinshoPreviewCtx.lineJoin = 'round';
+        targetCtx.beginPath();
+        targetCtx.lineWidth = line.width;
+        targetCtx.lineCap = 'round';
+        targetCtx.lineJoin = 'round';
 
         if (line.tool === 'eraser') {
-            nohinshoPreviewCtx.globalCompositeOperation = 'destination-out';
-            nohinshoPreviewCtx.strokeStyle = 'rgba(0,0,0,1)';
+            targetCtx.globalCompositeOperation = 'destination-out';
+            targetCtx.strokeStyle = 'rgba(0,0,0,1)';
         } else {
-            nohinshoPreviewCtx.globalCompositeOperation = 'source-over';
-            nohinshoPreviewCtx.strokeStyle = line.color || '#ff0000';
+            targetCtx.globalCompositeOperation = 'source-over';
+            targetCtx.strokeStyle = line.color || '#ff0000';
         }
 
-        nohinshoPreviewCtx.moveTo(line.points[0].x, line.points[0].y);
+        targetCtx.moveTo(line.points[0].x, line.points[0].y);
         for (let i = 1; i < line.points.length; i++) {
-            nohinshoPreviewCtx.lineTo(line.points[i].x, line.points[i].y);
+            targetCtx.lineTo(line.points[i].x, line.points[i].y);
         }
-        nohinshoPreviewCtx.stroke();
+        targetCtx.stroke();
     });
 
-    nohinshoPreviewCtx.globalCompositeOperation = 'source-over';
+    targetCtx.globalCompositeOperation = 'source-over';
 }
 
 function renderPreviewCanvas(imageUrl, linesHistory = []) {
@@ -674,34 +712,49 @@ function renderPreviewCanvas(imageUrl, linesHistory = []) {
         return;
     }
 
+    setAdminLoading(true, '納品書画像を読み込み中...');
     const img = new Image();
     img.onload = () => {
-        if (!selectedRecordId) return;
+        try {
+            if (!selectedRecordId) return;
 
-        nohinshoPreviewCanvas.width = img.naturalWidth || img.width;
-        nohinshoPreviewCanvas.height = img.naturalHeight || img.height;
-        nohinshoPreviewCtx.clearRect(0, 0, nohinshoPreviewCanvas.width, nohinshoPreviewCanvas.height);
-        nohinshoPreviewCtx.drawImage(img, 0, 0);
-        drawLinesOnPreview(linesHistory);
+            nohinshoPreviewCanvas.width = img.naturalWidth || img.width;
+            nohinshoPreviewCanvas.height = img.naturalHeight || img.height;
+            nohinshoPreviewCtx.clearRect(0, 0, nohinshoPreviewCanvas.width, nohinshoPreviewCanvas.height);
+            nohinshoPreviewCtx.drawImage(img, 0, 0);
 
-        const container = nohinshoPreviewCanvas.parentElement;
-        const availableWidth = Math.max(1, (container?.clientWidth || nohinshoPreviewCanvas.width) - 24);
-        const availableHeight = 640;
-        const scale = Math.min(
-            availableWidth / nohinshoPreviewCanvas.width,
-            availableHeight / nohinshoPreviewCanvas.height,
-            1
-        );
+            // Draw annotations on a transparent overlay first.
+            // This preserves the same behavior as editor: eraser only removes brush strokes,
+            // not pixels from the original background image.
+            const overlayCanvas = document.createElement('canvas');
+            overlayCanvas.width = nohinshoPreviewCanvas.width;
+            overlayCanvas.height = nohinshoPreviewCanvas.height;
+            const overlayCtx = overlayCanvas.getContext('2d');
+            drawLinesOnPreview(overlayCtx, linesHistory);
+            nohinshoPreviewCtx.drawImage(overlayCanvas, 0, 0);
 
-        nohinshoPreviewCanvas.style.width = `${Math.max(1, nohinshoPreviewCanvas.width * scale)}px`;
-        nohinshoPreviewCanvas.style.height = `${Math.max(1, nohinshoPreviewCanvas.height * scale)}px`;
-        nohinshoPreviewCanvas.style.display = 'block';
-        nohinshoPreview.style.display = 'none';
-        nohinshoPreviewEmpty.style.display = 'none';
+            const container = nohinshoPreviewCanvas.parentElement;
+            const availableWidth = Math.max(1, (container?.clientWidth || nohinshoPreviewCanvas.width) - 24);
+            const availableHeight = 640;
+            const scale = Math.min(
+                availableWidth / nohinshoPreviewCanvas.width,
+                availableHeight / nohinshoPreviewCanvas.height,
+                1
+            );
+
+            nohinshoPreviewCanvas.style.width = `${Math.max(1, nohinshoPreviewCanvas.width * scale)}px`;
+            nohinshoPreviewCanvas.style.height = `${Math.max(1, nohinshoPreviewCanvas.height * scale)}px`;
+            nohinshoPreviewCanvas.style.display = 'block';
+            nohinshoPreview.style.display = 'none';
+            nohinshoPreviewEmpty.style.display = 'none';
+        } finally {
+            setAdminLoading(false);
+        }
     };
 
     img.onerror = () => {
         setPreviewImage(imageUrl);
+        setAdminLoading(false);
     };
 
     img.src = imageUrl;
@@ -723,6 +776,7 @@ async function openNohinshoRecord(recordId) {
         return;
     }
 
+    setAdminLoading(true, '納品書データを読み込み中...');
     let linesHistory = Array.isArray(record.linesHistory) ? JSON.parse(JSON.stringify(record.linesHistory)) : [];
 
     try {
@@ -731,6 +785,8 @@ async function openNohinshoRecord(recordId) {
         linesHistory = detail.linesHistory;
     } catch (error) {
         console.warn('Failed to load latest annotation for admin preview:', error);
+    } finally {
+        setAdminLoading(false);
     }
 
     nohinshoNameInput.value = record.name || '';
@@ -749,7 +805,7 @@ async function openNohinshoRecord(recordId) {
 
 function saveSelectedNohinshoRecord() {
     if (!selectedRecordId) {
-        alert('対象の納品書を選択してください。');
+        showAdminToast('対象の納品書を選択してください。', 'error');
         return;
     }
 
@@ -765,12 +821,12 @@ function saveSelectedNohinshoRecord() {
 
     saveRecords(records);
     renderNohinshoRecords();
-    setAdminMessage('納品書を保存しました。');
+    showAdminToast('納品書を保存しました。', 'success', 3000);
 }
 
 async function deleteSelectedNohinshoRecord() {
     if (!selectedRecordId) {
-        alert('対象の納品書を選択してください。');
+        showAdminToast('対象の納品書を選択してください。', 'error');
         return;
     }
 
@@ -802,7 +858,7 @@ async function deleteSelectedNohinshoRecord() {
     nohinshoUrlInput.value = '';
     setPreviewImage('');
     renderNohinshoRecords();
-    setAdminMessage('納品書を削除一覧へ移動しました。');
+    showAdminToast('納品書を削除一覧へ移動しました。', 'success', 3000);
 }
 
 async function uploadNohinshoFile(file, dateStr, options = {}) {
@@ -821,7 +877,7 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
         const dataUrl = await parseFileToDataUrl(file);
         const latest = getRecords();
         const idx = latest.findIndex((r) => r.id === record.id);
-        if (!silent) setAdminMessage('Supabase Storage へアップロード中...');
+        if (!silent) showAdminToast('Supabase Storage へアップロード中...', 'info', 3000);
 
         const uploadResult = await uploadImageDataUrl(dataUrl, file.name, targetDate);
         if (idx >= 0) {
@@ -837,7 +893,7 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
             openNohinshoRecord(record.id);
         }
 
-        if (!silent) setAdminMessage('画像をアップロードしました。');
+        if (!silent) showAdminToast('画像をアップロードしました。', 'success', 3000);
         return { ok: true, recordId: record.id };
     } catch (error) {
         const latest = getRecords();
@@ -847,7 +903,9 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
             latest[idx].updatedAt = new Date().toISOString();
             saveRecords(latest);
         }
-        if (!silent) setAdminMessage(`アップロード失敗: ${error.message || 'network error'}`, 'error');
+        if (!silent) {
+            showAdminToast(`アップロード失敗: ${error.message || 'network error'}`, 'error', 3000);
+        }
         return { ok: false, recordId: record.id, error };
     } finally {
         if (activeAdminTab === 'nohinsho') renderNohinshoRecords();
@@ -857,11 +915,11 @@ async function uploadNohinshoFile(file, dateStr, options = {}) {
 async function uploadNohinshoFolder(files) {
     const targetFiles = Array.from(files || []).filter(isSupportedUploadFile);
     if (targetFiles.length === 0) {
-        alert('対応ファイル（画像/PDF）がありません。');
+        showAdminToast('対応ファイル（画像/PDF）がありません。', 'error');
         return;
     }
 
-    setAdminMessage(`フォルダアップロード中... 0/${targetFiles.length}`);
+    showAdminToast(`フォルダアップロード中... 0/${targetFiles.length}`, 'info', 3000);
     btnNohinshoUpload.disabled = true;
     btnNohinshoUploadFolder.disabled = true;
 
@@ -871,12 +929,12 @@ async function uploadNohinshoFolder(files) {
     for (let i = 0; i < targetFiles.length; i++) {
         const result = await uploadNohinshoFile(targetFiles[i], nohinshoDateInput.value || todayDateString(), { silent: true, selectOnDone: false });
         if (result.ok) success += 1; else failed += 1;
-        setAdminMessage(`フォルダアップロード中... ${i + 1}/${targetFiles.length}`);
+        showAdminToast(`フォルダアップロード中... ${i + 1}/${targetFiles.length}`, 'info', 3000);
     }
 
     btnNohinshoUpload.disabled = false;
     btnNohinshoUploadFolder.disabled = false;
-    setAdminMessage(`フォルダアップロード完了: 成功 ${success}件 / 失敗 ${failed}件`);
+    showAdminToast(`フォルダアップロード完了: 成功 ${success}件 / 失敗 ${failed}件`, failed > 0 ? 'error' : 'success', 3000);
     renderNohinshoRecords();
 }
 
@@ -886,7 +944,7 @@ async function purgeSoftDeletedRecords() {
 
     try {
         btnNohinshoPurgeDeleted.disabled = true;
-        setAdminMessage('削除済みデータを完全削除中...');
+        showAdminToast('削除済みデータを完全削除中...', 'info', 3000);
 
         await waitForRecordSyncIdle();
 
@@ -903,15 +961,16 @@ async function purgeSoftDeletedRecords() {
         clearNohinshoDetailForm();
         renderNohinshoRecords();
 
-        setAdminMessage(`完全削除しました: ${result?.purgedCount || 0}件（Storage削除: ${result?.removedStorageCount || 0}件）`);
+        showAdminToast(`完全削除しました: ${result?.purgedCount || 0}件（Storage削除: ${result?.removedStorageCount || 0}件）`, 'success', 3000);
     } catch (error) {
-        setAdminMessage(`完全削除失敗: ${error.message || 'network error'}`, 'error');
+        showAdminToast(`完全削除失敗: ${error.message || 'network error'}`, 'error', 3000);
     } finally {
         btnNohinshoPurgeDeleted.disabled = false;
     }
 }
 
 async function boot() {
+    setAdminLoading(true, '管理データを読み込み中...');
     try {
         const me = await apiRequest(API_AUTH_ME);
         currentSessionUser = me?.user || null;
@@ -924,20 +983,21 @@ async function boot() {
         console.warn('Admin boot failed:', error);
         setAuthToken('');
         currentSessionUser = null;
+    } finally {
+        setAdminLoading(false);
     }
 
     const sessionUser = getSessionUser();
 
     if (!sessionUser || sessionUser.role !== 'admin') {
-        alert('管理者のみアクセス可能です。');
+        showAdminToast('管理者のみアクセス可能です。', 'error', 2000);
         window.location.href = 'index.html';
         return;
     }
 
     adminStatus.textContent = `ログイン中: ${sessionUser.username} (admin)`;
-    const defaultDate = pickDefaultNohinshoDate(getRecords());
-    nohinshoDateInput.value = defaultDate;
-    nohinshoDateEditInput.value = defaultDate;
+        nohinshoDateInput.value = todayDateString();
+        nohinshoDateEditInput.value = todayDateString();
     renderUsers();
     renderNohinshoRecords();
     setActiveTab('users');
@@ -950,7 +1010,7 @@ toggleShowInactiveUsers.addEventListener('change', async (e) => {
     try {
         await refreshUsers();
     } catch (error) {
-        setAdminMessage(`ユーザー一覧の更新失敗: ${error.message || 'network error'}`, 'error');
+        showAdminToast(`ユーザー一覧の更新失敗: ${error.message || 'network error'}`, 'error', 3000);
     }
 });
 
