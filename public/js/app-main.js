@@ -3,6 +3,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const AUTH_TOKEN_KEY = 'ukeire_auth_token_v2';
 const RECORDS_KEY = 'ukeire_nohinsho_records_v1';
 const SIDEBAR_COLLAPSED_KEY = 'ukeire_sidebar_collapsed_v1';
+const STAMP_NAMES_KEY = 'ukeire_stamp_names_v1';
 const API_AUTH_LOGIN = '/api/auth/login';
 const API_AUTH_LOGOUT = '/api/auth/logout';
 const API_AUTH_ME = '/api/auth/me';
@@ -26,8 +27,8 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 const sidebarCollapseIcon = document.getElementById('sidebar-collapse-icon');
 const eraserIndicator = document.getElementById('eraser-indicator');
+const stampIndicator = document.getElementById('stamp-indicator');
 const uploadToast = document.getElementById('upload-toast');
-
 const bgCanvas = document.getElementById('bg-canvas');
 const bgCtx = bgCanvas.getContext('2d');
 const paintCanvas = document.getElementById('paint-canvas');
@@ -64,6 +65,9 @@ const mainRecordSliderPosition = document.getElementById('main-record-slider-pos
 const mainBtnEditRecord = document.getElementById('main-btn-edit-record');
 const mainBtnSaveRecord = document.getElementById('main-btn-save-record');
 const recordsList = document.getElementById('records-list');
+const stampFamilyNameInput = document.getElementById('stamp-family-name');
+const stampGivenNameInput = document.getElementById('stamp-given-name');
+const stampDateInput = document.getElementById('stamp-date');
 
 let currentUser = null;
 let currentRecordId = null;
@@ -578,6 +582,7 @@ function showAppForUser(user) {
     colorPicker.value = user.brushColor || '#ff0000';
     colorPicker.disabled = true;
     btnOpenAdmin.style.display = user.role === 'admin' ? 'block' : 'none';
+    loadStampNameInputs(user.id);
 
     filterDateInput.value = pickDefaultFilterDate(getRecords());
     recordSliderMode = 'unchecked';
@@ -641,6 +646,172 @@ function formatRecordDate(dateStr) {
     if (!dateStr) return '';
     const [y, m, d] = dateStr.split('-');
     return `${y}/${m}/${d}`;
+}
+
+function formatStampDate(dateStr) {
+    const value = dateStr || todayDateString();
+    const match = `${value}`.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return value;
+    return `${match[1]}.${parseInt(match[2], 10)}.${parseInt(match[3], 10)}`;
+}
+
+function getStampNamesStore() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(STAMP_NAMES_KEY) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function resetStampDateInput() {
+    if (stampDateInput) stampDateInput.value = todayDateString();
+}
+
+function loadStampNameInputs(userId) {
+    const saved = getStampNamesStore()[userId] || {};
+    if (stampFamilyNameInput) stampFamilyNameInput.value = saved.family || '';
+    if (stampGivenNameInput) stampGivenNameInput.value = saved.given || '';
+    resetStampDateInput();
+}
+
+function saveStampNameInputs(userId) {
+    if (!userId) return;
+    const store = getStampNamesStore();
+    store[userId] = {
+        family: stampFamilyNameInput?.value.trim() || '',
+        given: stampGivenNameInput?.value.trim() || ''
+    };
+    localStorage.setItem(STAMP_NAMES_KEY, JSON.stringify(store));
+}
+
+function getStampDateString() {
+    return stampDateInput?.value || todayDateString();
+}
+
+function getStampDiameter() {
+    const width = parseInt(lineWidthPicker.value, 10);
+    return Math.max(56, Math.min(220, width * 16));
+}
+
+function getHorizontalCircleChord(cx, cy, radius, yPos) {
+    const dy = yPos - cy;
+    if (Math.abs(dy) >= radius) return null;
+    const halfLen = Math.sqrt((radius * radius) - (dy * dy));
+    return { y: yPos, x1: cx - halfLen, x2: cx + halfLen };
+}
+
+function getStampSectionWidth(cx, cy, radius, sectionCenterY, paddingRatio = 0.88) {
+    const chord = getHorizontalCircleChord(cx, cy, radius, sectionCenterY);
+    if (!chord) return radius * paddingRatio;
+    return (chord.x2 - chord.x1) * paddingRatio;
+}
+
+function drawFittedHorizontalStampText(ctx, text, centerX, centerY, maxWidth, maxHeight, maxFontSize, color) {
+    const value = `${text || ''}`.trim();
+    if (!value || maxWidth <= 0 || maxHeight <= 0) return;
+
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    let fontSize = Math.min(maxFontSize, maxHeight);
+    while (fontSize > 6) {
+        ctx.font = `700 ${fontSize}px "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif`;
+        const metrics = ctx.measureText(value);
+        if (metrics.width <= maxWidth && fontSize <= maxHeight) break;
+        fontSize -= 1;
+    }
+
+    ctx.fillText(value, centerX, centerY);
+    ctx.restore();
+}
+
+function drawJapaneseCircleStamp(ctx, stamp) {
+    const cx = stamp.x;
+    const cy = stamp.y;
+    const diameter = stamp.size || 80;
+    const radius = diameter / 2;
+    const color = stamp.color || '#c41e3a';
+    const borderWidth = Math.max(2.5, diameter * 0.045);
+    const dividerWidth = Math.max(1.5, diameter * 0.028);
+    const innerRadius = radius - borderWidth * 0.6;
+    const topDividerY = cy - radius / 3;
+    const bottomDividerY = cy + radius / 3;
+    const topSectionY = cy - (radius * 2) / 3;
+    const bottomSectionY = cy + (radius * 2) / 3;
+    const sectionHeight = radius / 3;
+    const nameMaxFontSize = Math.max(11, diameter * 0.18);
+    const dateMaxFontSize = Math.max(9, diameter * 0.13);
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'butt';
+
+    ctx.beginPath();
+    ctx.lineWidth = borderWidth;
+    ctx.arc(cx, cy, radius - borderWidth / 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.lineWidth = dividerWidth;
+    [topDividerY, bottomDividerY].forEach((yPos) => {
+        const chord = getHorizontalCircleChord(cx, cy, innerRadius, yPos);
+        if (!chord) return;
+        ctx.beginPath();
+        ctx.moveTo(chord.x1, chord.y);
+        ctx.lineTo(chord.x2, chord.y);
+        ctx.stroke();
+    });
+
+    const topWidth = getStampSectionWidth(cx, cy, innerRadius, topSectionY);
+    const middleWidth = getStampSectionWidth(cx, cy, innerRadius, cy);
+    const bottomWidth = getStampSectionWidth(cx, cy, innerRadius, bottomSectionY);
+
+    drawFittedHorizontalStampText(
+        ctx, stamp.familyName, cx, topSectionY, topWidth, sectionHeight * 0.82, nameMaxFontSize, color
+    );
+    drawFittedHorizontalStampText(
+        ctx, stamp.dateText || formatStampDate(stamp.date), cx, cy, middleWidth, sectionHeight * 0.82, dateMaxFontSize, color
+    );
+    drawFittedHorizontalStampText(
+        ctx, stamp.givenName, cx, bottomSectionY, bottomWidth, sectionHeight * 0.82, nameMaxFontSize, color
+    );
+
+    ctx.restore();
+}
+
+function createStampAt(x, y) {
+    const familyName = stampFamilyNameInput?.value.trim() || '';
+    const givenName = stampGivenNameInput?.value.trim() || '';
+    if (!familyName && !givenName) {
+        showUploadToast('<i class="fa-solid fa-stamp"></i> サイドバーに姓と名を入力してください。', 'info', 2800);
+        return null;
+    }
+
+    const date = getStampDateString();
+    return {
+        user: currentUser,
+        tool: 'stamp',
+        color: colorPicker.value || '#c41e3a',
+        size: getStampDiameter(),
+        x,
+        y,
+        familyName,
+        givenName,
+        date,
+        dateText: formatStampDate(date),
+        timestamp: new Date().toLocaleTimeString()
+    };
+}
+
+function placeStampAtCoordinates(coords) {
+    const stamp = createStampAt(coords.x, coords.y);
+    if (!stamp) return false;
+    linesHistory.push(stamp);
+    redrawCanvas();
+    autoSaveCurrentRecord();
+    return true;
 }
 
 function normalizeRotationDeg(rotation) {
@@ -748,7 +919,7 @@ function updateRecordControlsState() {
     }
 
     const lockEditTools = !hasRecord || isLockedDone;
-    ['btn-brush', 'btn-eraser', 'btn-crop', 'btn-undo', 'btn-clear'].forEach((id) => {
+    ['btn-brush', 'btn-eraser', 'btn-stamp', 'btn-crop', 'btn-undo', 'btn-clear'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = lockEditTools;
     });
@@ -1473,7 +1644,7 @@ function getCanvasCoordinates(e) {
 }
 
 function canPan() {
-    return currentTool !== 'brush' && currentTool !== 'eraser' && currentTool !== 'crop' && !isDrawing && !isCropping;
+    return currentTool !== 'brush' && currentTool !== 'eraser' && currentTool !== 'stamp' && currentTool !== 'crop' && !isDrawing && !isCropping;
 }
 
 function hideEraserIndicator() {
@@ -1493,14 +1664,55 @@ function updateEraserIndicatorPosition(e) {
     eraserIndicator.style.display = 'block';
 }
 
+function hideStampIndicator() {
+    if (stampIndicator) stampIndicator.style.display = 'none';
+}
+
+function colorToTransparentRgba(color, alpha = 0.12) {
+    const value = `${color || ''}`.trim();
+    const hexMatch = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hexMatch) {
+        let hex = hexMatch[1];
+        if (hex.length === 3) {
+            hex = hex.split('').map((ch) => ch + ch).join('');
+        }
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return `rgba(196, 30, 58, ${alpha})`;
+}
+
+function updateStampIndicatorPosition(e) {
+    if (!stampIndicator || currentTool !== 'stamp' || !rawSourceData) {
+        hideStampIndicator();
+        return;
+    }
+
+    const size = Math.max(24, getStampDiameter() * currentScale);
+    const color = colorPicker.value || '#c41e3a';
+    stampIndicator.style.width = `${size}px`;
+    stampIndicator.style.height = `${size}px`;
+    stampIndicator.style.left = `${e.clientX}px`;
+    stampIndicator.style.top = `${e.clientY}px`;
+    stampIndicator.style.borderColor = color;
+    stampIndicator.style.color = color;
+    stampIndicator.style.background = colorToTransparentRgba(color, 0.14);
+    stampIndicator.style.display = 'block';
+}
+
 function updateToolUI() {
-    const isDrawTool = currentTool === 'brush' || currentTool === 'eraser';
+    const isDrawTool = currentTool === 'brush' || currentTool === 'eraser' || currentTool === 'stamp';
     const isCropTool = currentTool === 'crop';
     paintCanvas.classList.toggle('no-draw', !isDrawTool && !isCropTool);
-    paintCanvas.style.cursor = isCropTool ? 'crosshair' : (currentTool === 'eraser' ? 'none' : '');
+    paintCanvas.style.cursor = isCropTool
+        ? 'crosshair'
+        : (currentTool === 'stamp' ? 'copy' : (currentTool === 'eraser' ? 'none' : ''));
     cropActions.style.display = isCropTool && cropRect ? 'flex' : 'none';
     workspace.classList.toggle('pan-mode', canPan());
     if (currentTool !== 'eraser') hideEraserIndicator();
+    if (currentTool !== 'stamp') hideStampIndicator();
     if (!isCropTool) drawCropOverlay();
 }
 
@@ -1581,13 +1793,27 @@ function applyCrop() {
     paintCtx.drawImage(tmpPaint, 0, 0);
 
     linesHistory = linesHistory
-        .map((line) => ({
-            ...line,
-            points: line.points
-                .map((p) => ({ x: p.x - x, y: p.y - y }))
-                .filter((p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h)
-        }))
-        .filter((line) => line.points.length > 0);
+        .map((line) => {
+            if (line.tool === 'stamp') {
+                return {
+                    ...line,
+                    x: line.x - x,
+                    y: line.y - y
+                };
+            }
+            return {
+                ...line,
+                points: line.points
+                    .map((p) => ({ x: p.x - x, y: p.y - y }))
+                    .filter((p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h)
+            };
+        })
+        .filter((line) => {
+            if (line.tool === 'stamp') {
+                return line.x >= 0 && line.x <= w && line.y >= 0 && line.y <= h;
+            }
+            return line.points.length > 0;
+        });
 
     const img = new Image();
     img.onload = () => {
@@ -1659,7 +1885,13 @@ function redrawCanvas() {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
 
     linesHistory.forEach((line) => {
-        if (line.points.length < 1) return;
+        if (line.tool === 'stamp') {
+            paintCtx.globalCompositeOperation = 'source-over';
+            drawJapaneseCircleStamp(paintCtx, line);
+            return;
+        }
+
+        if (!Array.isArray(line.points) || line.points.length < 1) return;
 
         paintCtx.beginPath();
         paintCtx.lineWidth = line.width;
@@ -1692,6 +1924,7 @@ function setTool(tool) {
     document.getElementById('btn-pan').classList.toggle('active', tool === 'pan');
     document.getElementById('btn-brush').classList.toggle('active', tool === 'brush');
     document.getElementById('btn-eraser').classList.toggle('active', tool === 'eraser');
+    document.getElementById('btn-stamp').classList.toggle('active', tool === 'stamp');
     document.getElementById('btn-crop').classList.toggle('active', tool === 'crop');
 
     updateToolUI();
@@ -1809,6 +2042,7 @@ btnFilterToday.addEventListener('click', async () => {
 document.getElementById('btn-pan').addEventListener('click', () => setTool('pan'));
 document.getElementById('btn-brush').addEventListener('click', () => setTool('brush'));
 document.getElementById('btn-eraser').addEventListener('click', () => setTool('eraser'));
+document.getElementById('btn-stamp').addEventListener('click', () => setTool('stamp'));
 document.getElementById('btn-crop').addEventListener('click', () => setTool('crop'));
 document.getElementById('btn-crop-apply').addEventListener('click', applyCrop);
 document.getElementById('btn-crop-cancel').addEventListener('click', cancelCropSelection);
@@ -1851,10 +2085,20 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 });
 
 lineWidthPicker.addEventListener('input', () => {
-    if (currentTool !== 'eraser' || eraserIndicator.style.display !== 'block') return;
-    const currentSize = Math.max(8, parseInt(lineWidthPicker.value, 10) * currentScale);
-    eraserIndicator.style.width = `${currentSize}px`;
-    eraserIndicator.style.height = `${currentSize}px`;
+    if (currentTool === 'eraser' && eraserIndicator.style.display === 'block') {
+        const currentSize = Math.max(8, parseInt(lineWidthPicker.value, 10) * currentScale);
+        eraserIndicator.style.width = `${currentSize}px`;
+        eraserIndicator.style.height = `${currentSize}px`;
+    }
+    if (currentTool === 'stamp' && stampIndicator && stampIndicator.style.display === 'block') {
+        const size = Math.max(24, getStampDiameter() * currentScale);
+        stampIndicator.style.width = `${size}px`;
+        stampIndicator.style.height = `${size}px`;
+        const color = colorPicker.value || '#c41e3a';
+        stampIndicator.style.borderColor = color;
+        stampIndicator.style.color = color;
+        stampIndicator.style.background = colorToTransparentRgba(color, 0.14);
+    }
 });
 
 workspace.addEventListener('dragover', (e) => {
@@ -1933,6 +2177,13 @@ workspace.addEventListener('pointermove', (e) => {
 workspace.addEventListener('pointerup', endPan);
 workspace.addEventListener('pointercancel', endPan);
 
+stampFamilyNameInput?.addEventListener('input', () => {
+    if (currentUser?.id) saveStampNameInputs(currentUser.id);
+});
+stampGivenNameInput?.addEventListener('input', () => {
+    if (currentUser?.id) saveStampNameInputs(currentUser.id);
+});
+
 paintCanvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || isPinching || workspacePointers.size > 1) return;
     updateEraserIndicatorPosition(e);
@@ -1948,6 +2199,14 @@ paintCanvas.addEventListener('pointerdown', (e) => {
         cropRect = makeCropRect(cropAnchor.x, cropAnchor.y, cropAnchor.x, cropAnchor.y);
         drawCropOverlay();
         updateToolUI();
+        paintCanvas.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+    }
+
+    if (currentTool === 'stamp') {
+        const coords = getCanvasCoordinates(e);
+        placeStampAtCoordinates(coords);
         paintCanvas.setPointerCapture(e.pointerId);
         e.preventDefault();
         return;
@@ -1976,6 +2235,7 @@ paintCanvas.addEventListener('pointerdown', (e) => {
 paintCanvas.addEventListener('pointermove', (e) => {
     if (isPinching) return;
     updateEraserIndicatorPosition(e);
+    updateStampIndicatorPosition(e);
 
     if (currentTool === 'crop' && isCropping && cropAnchor) {
         const coords = getCanvasCoordinates(e);
@@ -2003,6 +2263,7 @@ paintCanvas.addEventListener('pointerup', () => {
 
 paintCanvas.addEventListener('pointerleave', () => {
     hideEraserIndicator();
+    hideStampIndicator();
     if (currentTool === 'crop' && isCropping) {
         handleCropEnd();
         return;
@@ -2012,6 +2273,7 @@ paintCanvas.addEventListener('pointerleave', () => {
 
 paintCanvas.addEventListener('pointercancel', () => {
     hideEraserIndicator();
+    hideStampIndicator();
     if (currentTool === 'crop' && isCropping) {
         handleCropEnd();
         return;
@@ -2021,6 +2283,7 @@ paintCanvas.addEventListener('pointercancel', () => {
 
 paintCanvas.addEventListener('pointerenter', (e) => {
     updateEraserIndicatorPosition(e);
+    updateStampIndicatorPosition(e);
 });
 
 window.addEventListener('resize', () => {

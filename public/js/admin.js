@@ -697,8 +697,108 @@ function setPreviewImage(imageUrl) {
     nohinshoPreview.src = imageUrl;
 }
 
+function getHorizontalCircleChordAdmin(cx, cy, radius, yPos) {
+    const dy = yPos - cy;
+    if (Math.abs(dy) >= radius) return null;
+    const halfLen = Math.sqrt((radius * radius) - (dy * dy));
+    return { y: yPos, x1: cx - halfLen, x2: cx + halfLen };
+}
+
+function getStampSectionWidthAdmin(cx, cy, radius, sectionCenterY, paddingRatio = 0.88) {
+    const chord = getHorizontalCircleChordAdmin(cx, cy, radius, sectionCenterY);
+    if (!chord) return radius * paddingRatio;
+    return (chord.x2 - chord.x1) * paddingRatio;
+}
+
+function drawFittedHorizontalStampTextAdmin(ctx, text, centerX, centerY, maxWidth, maxHeight, maxFontSize, color) {
+    const value = `${text || ''}`.trim();
+    if (!value || maxWidth <= 0 || maxHeight <= 0) return;
+
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    let fontSize = Math.min(maxFontSize, maxHeight);
+    while (fontSize > 6) {
+        ctx.font = `700 ${fontSize}px "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif`;
+        const metrics = ctx.measureText(value);
+        if (metrics.width <= maxWidth && fontSize <= maxHeight) break;
+        fontSize -= 1;
+    }
+
+    ctx.fillText(value, centerX, centerY);
+    ctx.restore();
+}
+
+function formatStampDateAdmin(dateStr) {
+    const value = dateStr || '';
+    const match = `${value}`.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return value;
+    return `${match[1]}.${parseInt(match[2], 10)}.${parseInt(match[3], 10)}`;
+}
+
+function drawJapaneseCircleStampAdmin(ctx, stamp) {
+    const cx = stamp.x;
+    const cy = stamp.y;
+    const diameter = stamp.size || 80;
+    const radius = diameter / 2;
+    const color = stamp.color || '#c41e3a';
+    const borderWidth = Math.max(2.5, diameter * 0.045);
+    const dividerWidth = Math.max(1.5, diameter * 0.028);
+    const innerRadius = radius - borderWidth * 0.6;
+    const topDividerY = cy - radius / 3;
+    const bottomDividerY = cy + radius / 3;
+    const topSectionY = cy - (radius * 2) / 3;
+    const bottomSectionY = cy + (radius * 2) / 3;
+    const sectionHeight = radius / 3;
+    const nameMaxFontSize = Math.max(11, diameter * 0.18);
+    const dateMaxFontSize = Math.max(9, diameter * 0.13);
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineCap = 'butt';
+
+    ctx.beginPath();
+    ctx.lineWidth = borderWidth;
+    ctx.arc(cx, cy, radius - borderWidth / 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.lineWidth = dividerWidth;
+    [topDividerY, bottomDividerY].forEach((yPos) => {
+        const chord = getHorizontalCircleChordAdmin(cx, cy, innerRadius, yPos);
+        if (!chord) return;
+        ctx.beginPath();
+        ctx.moveTo(chord.x1, chord.y);
+        ctx.lineTo(chord.x2, chord.y);
+        ctx.stroke();
+    });
+
+    const topWidth = getStampSectionWidthAdmin(cx, cy, innerRadius, topSectionY);
+    const middleWidth = getStampSectionWidthAdmin(cx, cy, innerRadius, cy);
+    const bottomWidth = getStampSectionWidthAdmin(cx, cy, innerRadius, bottomSectionY);
+
+    drawFittedHorizontalStampTextAdmin(
+        ctx, stamp.familyName, cx, topSectionY, topWidth, sectionHeight * 0.82, nameMaxFontSize, color
+    );
+    drawFittedHorizontalStampTextAdmin(
+        ctx, stamp.dateText || formatStampDateAdmin(stamp.date), cx, cy, middleWidth, sectionHeight * 0.82, dateMaxFontSize, color
+    );
+    drawFittedHorizontalStampTextAdmin(
+        ctx, stamp.givenName, cx, bottomSectionY, bottomWidth, sectionHeight * 0.82, nameMaxFontSize, color
+    );
+
+    ctx.restore();
+}
+
 function drawLinesOnPreview(targetCtx, linesHistory) {
     (Array.isArray(linesHistory) ? linesHistory : []).forEach((line) => {
+        if (line.tool === 'stamp') {
+            targetCtx.globalCompositeOperation = 'source-over';
+            drawJapaneseCircleStampAdmin(targetCtx, line);
+            return;
+        }
+
         if (!Array.isArray(line?.points) || line.points.length < 1) return;
 
         targetCtx.beginPath();

@@ -18,16 +18,19 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <section id="auth-screen" class="auth-screen">
         <div class="auth-card">
-            <h1>ログイン</h1>
-            <p class="muted">デフォルト管理者: admin / admin123</p>
+            <h1 class="auth-title" style="text-align: center;">ログイン</h1>
+            <!-- <p class="muted">デフォルト管理者: admin / admin123</p> -->
             <input id="login-username" type="text" placeholder="ユーザー名">
             <input id="login-password" type="password" placeholder="パスワード">
-            <button id="btn-login">ログイン</button>
+            <button id="btn-login" style="margin: 0 auto    ">ログイン</button>
             <p id="login-error" class="error-text"></p>
         </div>
     </section>
@@ -36,6 +39,7 @@
         <button id="sidebar-toggle" class="sidebar-toggle" type="button"><i class="fa-solid fa-bars"></i><span>ツール</span></button>
         <div id="sidebar-overlay" class="sidebar-overlay"></div>
         <div id="eraser-indicator" class="eraser-indicator"></div>
+        <div id="stamp-indicator" class="stamp-indicator"></div>
 
         <aside id="sidebar" class="sidebar">
             <input type="file" id="file-input" accept="image/*,application/pdf" style="display: none;">
@@ -77,6 +81,16 @@
                 <div id="records-list" class="records-list"></div>
             </div>
 
+            <div class="sidebar-title sidebar-collapsible-text">印鑑</div>
+            <div class="tool-group sidebar-collapsible-field">
+                <input type="text" id="stamp-family-name" class="sidebar-collapsible-input" maxlength="4" placeholder="姓（例: 山田）">
+                <input type="text" id="stamp-given-name" class="sidebar-collapsible-input" maxlength="4" placeholder="名（例: 太郎）">
+                <label class="sidebar-collapsible-field"><span class="sidebar-label">日付</span>
+                    <input type="date" id="stamp-date" class="sidebar-collapsible-input">
+                </label>
+                <p class="muted sidebar-collapsible-text">上に姓、中央に日付（年.月.日）、下に名を横書きで表示します。</p>
+            </div>
+
             <div class="sidebar-title">納品書ステータス</div>
             <div class="tool-group">
                 <input type="text" id="record-name" class="sidebar-collapsible-input" placeholder="納品書名">
@@ -108,6 +122,7 @@
                 <button id="btn-pan" class="btn-pan active"><i class="fa-solid fa-hand"></i><span>移動</span></button>
                 <button id="btn-brush"><i class="fa-solid fa-paintbrush"></i><span>ブラシ</span></button>
                 <button id="btn-eraser"><i class="fa-solid fa-eraser"></i><span>消しゴム</span></button>
+                <button id="btn-stamp"><i class="fa-solid fa-stamp"></i><span>印鑑</span></button>
                 <button id="btn-crop" class="btn-crop"><i class="fa-solid fa-crop-simple"></i><span>切り抜き</span></button>
 
                 <label><span>色</span><input type="color" id="color-picker" value="#ff0000"></label>

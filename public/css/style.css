@@ -381,6 +381,41 @@ body {
     z-index: 60;
 }
 
+.stamp-indicator {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 64px;
+    height: 64px;
+    border: 2px solid rgba(196, 30, 58, 0.75);
+    border-radius: 50%;
+    background: rgba(196, 30, 58, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    display: none;
+    z-index: 61;
+}
+
+.stamp-indicator::before,
+.stamp-indicator::after {
+    content: '';
+    position: absolute;
+    left: 14%;
+    right: 14%;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.45;
+}
+
+.stamp-indicator::before {
+    top: 34%;
+}
+
+.stamp-indicator::after {
+    bottom: 34%;
+}
+
 button,
 input,
 select {
