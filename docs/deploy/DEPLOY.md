@@ -7,7 +7,7 @@ Backend API đã chuyển sang REST thật (`/api/auth`, `/api/users`, `/api/rec
 
 - `src/server.js`: backend Express + API
 - `public/`: frontend static
-	- `public/js/`: `app-main.js`, `admin.js`
+	- `public/js/`: `dashboard.js`, `admin-panel.js`
 	- `public/css/`: `style.css`
 	- `public/assets/`: `icon.svg`
 	- root của `public/`: `index.html`, `admin.html`, `sw.js`, `manifest.json`

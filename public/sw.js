@@ -5,8 +5,9 @@ const LOCAL_ASSETS = [
   './index.html',
   './admin.html',
   './css/style.css',
-  './js/app-main.js',
-  './js/admin.js',
+  './js/shared.js',
+  './js/dashboard.js',
+  './js/admin-panel.js',
   './assets/icon.svg',
   './manifest.json',
 ];

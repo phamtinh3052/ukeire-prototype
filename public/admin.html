@@ -90,6 +90,10 @@
             <section id="admin-panel-nohinsho" class="admin-panel">
                 <div class="admin-card admin-records-layout">
                     <div class="admin-records-toolbar">
+                        <label class="admin-checkbox-row">
+                            <input id="nohinsho-filter-by-date" type="checkbox">
+                            <span>日付で絞る</span>
+                        </label>
                         <label>日付 <input id="nohinsho-date" type="date"></label>
                         <label>検索 <input id="nohinsho-search" type="search" placeholder="ファイル名で検索"></label>
                         <label>並び順
@@ -153,6 +157,7 @@
 
     <div id="admin-toast" class="upload-toast hidden" role="alert" aria-live="polite"></div>
 
-    <script src="js/admin.js"></script>
+    <script src="js/shared.js"></script>
+    <script src="js/admin-panel.js"></script>
 </body>
 </html>

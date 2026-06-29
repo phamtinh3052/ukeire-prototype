@@ -24,6 +24,13 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <div id="boot-screen" class="boot-screen">
+        <div class="boot-card">
+            <div class="boot-spinner"></div>
+            <div>読み込み中...</div>
+        </div>
+    </div>
+
     <section id="auth-screen" class="auth-screen">
         <div class="auth-card">
             <h1 class="auth-title" style="text-align: center;">ログイン</h1>
@@ -170,7 +177,8 @@
     </div>
 
     <div id="upload-toast" class="upload-toast hidden" role="alert"></div>
-    <script src="js/app-main.js"></script>
+    <script src="js/shared.js"></script>
+    <script src="js/dashboard.js"></script>
 
     <!-- PWA: Service Worker registration -->
     <script>
