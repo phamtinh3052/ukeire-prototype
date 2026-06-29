@@ -1232,6 +1232,12 @@ function decodeBarcode(dataUrl, callback) {
     }
 }
 
+function decodeBarcodeAsync(dataUrl) {
+    return new Promise((resolve) => {
+        decodeBarcode(dataUrl, (code) => resolve((code || '').trim()));
+    });
+}
+
 async function handleScanCapture() {
     const dataUrl = captureVideoFrameAsDataUrl(1.0);
     if (!dataUrl) {
@@ -1281,8 +1287,16 @@ async function handleScanUpload() {
         showAdminToast('まず撮影してください。', 'error');
         return;
     }
-    const rawName = scanFilenameInput.value.trim();
-    const fileName = rawName ? `${rawName}.png` : `scan-${Date.now()}.png`;
+    let rawName = scanFilenameInput.value.trim();
+    if (!rawName) {
+        const detected = (await decodeBarcodeAsync(capturedDataUrl)) || (scanDetectedCode || '').trim();
+        if (detected) {
+            rawName = detected;
+            scanFilenameInput.value = detected;
+        }
+    }
+    const safeBaseName = `${rawName || ''}`.replace(/\.[a-zA-Z0-9]+$/, '').trim();
+    const fileName = safeBaseName ? `${safeBaseName}.png` : `scan-${Date.now()}.png`;
     let blob;
     try {
         blob = dataUrlToBlob(capturedDataUrl);
