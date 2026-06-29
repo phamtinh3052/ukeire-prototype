@@ -17,6 +17,7 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -68,6 +69,7 @@
             <div class="tool-group">
                 <button id="btn-upload"><i class="fa-solid fa-file-arrow-up"></i><span class="sidebar-label">納品書をアップロード</span></button>
                 <button id="btn-upload-folder"><i class="fa-solid fa-folder-open"></i><span class="sidebar-label">フォルダをアップロード</span></button>
+                <button id="btn-scan-open"><i class="fa-solid fa-camera"></i><span class="sidebar-label">カメラスキャン</span></button>
             </div>
 
             <div class="sidebar-title sidebar-collapsible-text">納品書一覧</div>
@@ -95,7 +97,7 @@
                 <label class="sidebar-collapsible-field"><span class="sidebar-label">日付</span>
                     <input type="date" id="stamp-date" class="sidebar-collapsible-input">
                 </label>
-                <p class="muted sidebar-collapsible-text">上に姓、中央に日付（年.月.日）、下に名を横書きで表示します。</p>
+                <!-- <p class="muted sidebar-collapsible-text">上に姓、中央に日付（年.月.日）、下に名を横書きで表示します。</p> -->
             </div>
 
             <div class="sidebar-title">納品書ステータス</div>
@@ -177,6 +179,42 @@
     </div>
 
     <div id="upload-toast" class="upload-toast hidden" role="alert"></div>
+
+    <!-- Camera Scan Modal -->
+    <div id="scan-modal" class="scan-modal hidden" role="dialog" aria-modal="true" aria-label="カメラスキャン">
+        <div class="scan-modal-inner">
+            <div class="scan-modal-header">
+                <span class="scan-modal-title"><i class="fa-solid fa-camera"></i> 撮影・バーコードスキャン</span>
+                <button id="btn-scan-close" class="scan-close-btn" type="button" aria-label="閉じる">×</button>
+            </div>
+            <div id="scan-camera-view" class="scan-camera-view">
+                <video id="scan-video" autoplay playsinline muted></video>
+                <div class="scan-reticle"></div>
+                <div id="scan-live-status" class="scan-live-status">カメラを起動中...</div>
+            </div>
+            <div id="scan-capture-view" class="scan-capture-view hidden">
+                <img id="scan-capture-img" alt="撮影した画像">
+                <div id="scan-barcode-badge" class="scan-barcode-badge hidden">
+                    <i class="fa-solid fa-barcode"></i>
+                    <span>コード: </span><span id="scan-barcode-code" class="scan-barcode-code-val"></span>
+                </div>
+            </div>
+            <div class="scan-form-row">
+                <label class="scan-form-label" for="scan-filename-input">ファイル名（バーコードから自動入力）</label>
+                <div class="scan-filename-wrap">
+                    <input id="scan-filename-input" type="text" class="scan-filename-input" placeholder="例: 12345678（拡張子不要）">
+                    <span class="scan-ext-label">.png</span>
+                </div>
+            </div>
+            <div class="scan-modal-actions">
+                <button id="btn-scan-capture" class="btn-primary" type="button"><i class="fa-solid fa-camera"></i> 撮影</button>
+                <button id="btn-scan-retake" class="btn-secondary hidden" type="button"><i class="fa-solid fa-rotate-left"></i> 撮り直す</button>
+                <button id="btn-scan-upload" class="btn-primary hidden" type="button"><i class="fa-solid fa-upload"></i> アップロード</button>
+                <button id="btn-scan-cancel" class="btn-secondary" type="button">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
     <script src="js/shared.js"></script>
     <script src="js/dashboard.js"></script>
 

@@ -37,9 +37,25 @@ const nohinshoStatusInput = document.getElementById('nohinsho-status');
 const nohinshoUrlInput = document.getElementById('nohinsho-url');
 const btnNohinshoSave = document.getElementById('btn-nohinsho-save');
 const btnNohinshoDelete = document.getElementById('btn-nohinsho-delete');
-const btnNohinshoApplyUpload = document.getElementById('btn-nohinsho-apply-upload');
+const btnNohinshoScan = document.getElementById('btn-nohinsho-scan');
 const nohinshoFileInput = document.getElementById('nohinsho-file-input');
 const nohinshoFolderInput = document.getElementById('nohinsho-folder-input');
+
+// Camera scan modal elements
+const scanModal = document.getElementById('scan-modal');
+const scanVideo = document.getElementById('scan-video');
+const scanCameraView = document.getElementById('scan-camera-view');
+const scanCaptureView = document.getElementById('scan-capture-view');
+const scanCaptureImg = document.getElementById('scan-capture-img');
+const scanBarcodeBadge = document.getElementById('scan-barcode-badge');
+const scanBarcodeCodeEl = document.getElementById('scan-barcode-code');
+const scanLiveStatus = document.getElementById('scan-live-status');
+const scanFilenameInput = document.getElementById('scan-filename-input');
+const btnScanCapture = document.getElementById('btn-scan-capture');
+const btnScanRetake = document.getElementById('btn-scan-retake');
+const btnScanUpload = document.getElementById('btn-scan-upload');
+const btnScanClose = document.getElementById('btn-scan-close');
+const btnScanCancel = document.getElementById('btn-scan-cancel');
 
 let activeAdminTab = 'users';
 let selectedRecordId = null;
@@ -50,6 +66,12 @@ const loadingCounter = {
     nohinshoList: 0,
     preview: 0
 };
+
+// Camera scan state
+let scanStream = null;
+let scanIntervalId = null;
+let scanCapturedDataUrl = null;
+let scanDetectedCode = null;
 
 const DEFAULT_STORE_DATA = {
     [USERS_KEY]: [],
@@ -1082,6 +1104,186 @@ async function purgeSoftDeletedRecords() {
     }
 }
 
+// ── Camera Scan Feature ───────────────────────────────────────────────────────
+
+async function openScanModal() {
+    if (!scanModal) return;
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+    scanFilenameInput.value = '';
+    scanBarcodeBadge.classList.add('hidden');
+    scanCameraView.classList.remove('hidden');
+    scanCaptureView.classList.add('hidden');
+    btnScanCapture.classList.remove('hidden');
+    btnScanRetake.classList.add('hidden');
+    btnScanUpload.classList.add('hidden');
+    scanModal.classList.remove('hidden');
+    await startScanCamera();
+}
+
+function closeScanModal() {
+    stopScanCamera();
+    if (scanModal) scanModal.classList.add('hidden');
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+}
+
+async function startScanCamera() {
+    try {
+        scanLiveStatus.textContent = 'カメラを起動中...';
+        scanLiveStatus.style.background = '';
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 960 }
+            }
+        });
+        scanStream = stream;
+        scanVideo.srcObject = stream;
+        await new Promise((resolve, reject) => {
+            scanVideo.onloadedmetadata = resolve;
+            scanVideo.onerror = reject;
+            setTimeout(reject, 8000);
+        });
+        scanVideo.play();
+        scanLiveStatus.textContent = 'バーコードにカメラを向けてください...';
+        startLiveBarcodeScanning();
+    } catch (error) {
+        scanLiveStatus.textContent = `⚠ カメラ起動失敗: ${error.message || '権限を確認してください'}`;
+        scanLiveStatus.style.background = 'rgba(180,35,24,0.75)';
+    }
+}
+
+function stopScanCamera() {
+    stopLiveBarcodeScanning();
+    if (scanStream) {
+        scanStream.getTracks().forEach((t) => t.stop());
+        scanStream = null;
+    }
+    if (scanVideo) scanVideo.srcObject = null;
+}
+
+function startLiveBarcodeScanning() {
+    stopLiveBarcodeScanning();
+    if (!window.Quagga) return;
+    scanIntervalId = setInterval(() => {
+        if (!scanStream || !scanVideo || scanVideo.readyState < 2 || scanCapturedDataUrl) return;
+        const dataUrl = captureVideoFrameAsDataUrl(0.8);
+        if (!dataUrl) return;
+        decodeBarcode(dataUrl, (code) => {
+            if (!code || scanCapturedDataUrl) return;
+            if (scanDetectedCode !== code) {
+                scanDetectedCode = code;
+                scanLiveStatus.textContent = `✅ コード検出: ${code}`;
+                scanLiveStatus.style.background = 'rgba(22,163,74,0.75)';
+                if (!scanFilenameInput.value) scanFilenameInput.value = code;
+                if (navigator.vibrate) navigator.vibrate(90);
+            }
+        });
+    }, 1000);
+}
+
+function stopLiveBarcodeScanning() {
+    if (scanIntervalId) {
+        clearInterval(scanIntervalId);
+        scanIntervalId = null;
+    }
+}
+
+function captureVideoFrameAsDataUrl(quality = 1.0) {
+    if (!scanVideo || !scanVideo.videoWidth) return null;
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = scanVideo.videoWidth;
+    tmpCanvas.height = scanVideo.videoHeight;
+    tmpCanvas.getContext('2d').drawImage(scanVideo, 0, 0);
+    return quality < 1 ? tmpCanvas.toDataURL('image/jpeg', quality) : tmpCanvas.toDataURL('image/png');
+}
+
+function decodeBarcode(dataUrl, callback) {
+    if (!window.Quagga) { callback(null); return; }
+    try {
+        Quagga.decodeSingle({
+            src: dataUrl,
+            numOfWorkers: 0,
+            inputStream: { size: 900 },
+            decoder: {
+                readers: [
+                    'code_128_reader',
+                    'ean_reader',
+                    'ean_8_reader',
+                    'code_39_reader',
+                    'code_93_reader',
+                    'upc_reader',
+                    'upc_e_reader',
+                    'codabar_reader'
+                ]
+            },
+            locate: true
+        }, (result) => {
+            callback(result?.codeResult?.code || null);
+        });
+    } catch (e) {
+        callback(null);
+    }
+}
+
+async function handleScanCapture() {
+    const dataUrl = captureVideoFrameAsDataUrl(1.0);
+    if (!dataUrl) {
+        showAdminToast('カメラからフレームを取得できませんでした。', 'error');
+        return;
+    }
+    scanCapturedDataUrl = dataUrl;
+    stopScanCamera();
+
+    scanCameraView.classList.add('hidden');
+    scanCaptureView.classList.remove('hidden');
+    scanCaptureImg.src = dataUrl;
+    btnScanCapture.classList.add('hidden');
+    btnScanRetake.classList.remove('hidden');
+    btnScanUpload.classList.remove('hidden');
+    scanBarcodeBadge.classList.add('hidden');
+
+    showAdminToast('バーコードを解析中...', 'info', 2500);
+    decodeBarcode(dataUrl, (code) => {
+        const detected = code || scanDetectedCode;
+        if (detected) {
+            scanBarcodeCodeEl.textContent = detected;
+            scanBarcodeBadge.classList.remove('hidden');
+            if (!scanFilenameInput.value) scanFilenameInput.value = detected;
+            showAdminToast(`✅ バーコード: ${detected}`, 'success', 3000);
+        } else {
+            showAdminToast('バーコードは検出できませんでした。手動でファイル名を入力してください。', 'info', 4000);
+        }
+    });
+}
+
+async function handleScanRetake() {
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+    scanBarcodeBadge.classList.add('hidden');
+    scanCaptureView.classList.add('hidden');
+    scanCameraView.classList.remove('hidden');
+    btnScanCapture.classList.remove('hidden');
+    btnScanRetake.classList.add('hidden');
+    btnScanUpload.classList.add('hidden');
+    await startScanCamera();
+}
+
+async function handleScanUpload() {
+    if (!scanCapturedDataUrl) {
+        showAdminToast('まず撮影してください。', 'error');
+        return;
+    }
+    const rawName = scanFilenameInput.value.trim();
+    const fileName = rawName ? `${rawName}.png` : `scan-${Date.now()}.png`;
+    closeScanModal();
+    const blob = dataUrlToBlob(scanCapturedDataUrl);
+    const file = new File([blob], fileName, { type: 'image/png' });
+    await uploadNohinshoFile(file, nohinshoDateInput.value || todayDateString());
+}
+
 async function boot() {
     setUsersLoading(true, 'ユーザー一覧を読み込み中...');
     setNohinshoListLoading(true, '納品書一覧を読み込み中...');
@@ -1178,6 +1380,22 @@ nohinshoSortInput.addEventListener('change', renderNohinshoRecords);
 btnNohinshoUpload.addEventListener('click', () => nohinshoFileInput.click());
 btnNohinshoUploadFolder.addEventListener('click', () => nohinshoFolderInput.click());
 btnNohinshoPurgeDeleted.addEventListener('click', purgeSoftDeletedRecords);
+btnNohinshoScan.addEventListener('click', openScanModal);
+
+// Scan modal events
+btnScanCapture.addEventListener('click', handleScanCapture);
+btnScanRetake.addEventListener('click', handleScanRetake);
+btnScanUpload.addEventListener('click', handleScanUpload);
+btnScanClose.addEventListener('click', closeScanModal);
+btnScanCancel.addEventListener('click', closeScanModal);
+if (scanModal) {
+    scanModal.addEventListener('click', (e) => {
+        if (e.target === scanModal) closeScanModal();
+    });
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && scanModal && !scanModal.classList.contains('hidden')) closeScanModal();
+});
 nohinshoFileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) await uploadNohinshoFile(file, nohinshoDateInput.value || todayDateString());

@@ -17,6 +17,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -105,7 +106,8 @@
                         <button id="btn-nohinsho-today" class="btn-secondary" type="button">今日</button>
                         <button id="btn-nohinsho-upload" class="btn-primary" type="button">ファイルをアップロード</button>
                         <button id="btn-nohinsho-upload-folder" class="btn-primary" type="button">フォルダをアップロード</button>
-                        <button id="btn-nohinsho-purge-deleted" class="btn-danger" type="button">削除済みを完全削除</button>
+                        <button id="btn-nohinsho-scan" class="btn-primary" type="button"><i class="fa-solid fa-camera"></i> カメラスキャン</button>
+                        <!-- <button id="btn-nohinsho-purge-deleted" class="btn-danger" type="button">削除済みを完全削除</button> -->
                     </div>
 
                     <div class="admin-records-grid">
@@ -156,6 +158,49 @@
     </div>
 
     <div id="admin-toast" class="upload-toast hidden" role="alert" aria-live="polite"></div>
+
+    <!-- Camera Scan Modal -->
+    <div id="scan-modal" class="scan-modal hidden" role="dialog" aria-modal="true" aria-label="カメラスキャン">
+        <div class="scan-modal-inner">
+            <div class="scan-modal-header">
+                <span class="scan-modal-title"><i class="fa-solid fa-camera"></i> 撮影・バーコードスキャン</span>
+                <button id="btn-scan-close" class="scan-close-btn" type="button" aria-label="閉じる">×</button>
+            </div>
+
+            <!-- Live camera view -->
+            <div id="scan-camera-view" class="scan-camera-view">
+                <video id="scan-video" autoplay playsinline muted></video>
+                <div class="scan-reticle"></div>
+                <div id="scan-live-status" class="scan-live-status">カメラを起動中...</div>
+            </div>
+
+            <!-- Captured image view -->
+            <div id="scan-capture-view" class="scan-capture-view hidden">
+                <img id="scan-capture-img" alt="撮影した画像">
+                <div id="scan-barcode-badge" class="scan-barcode-badge hidden">
+                    <i class="fa-solid fa-barcode"></i>
+                    <span>コード: </span><span id="scan-barcode-code" class="scan-barcode-code-val"></span>
+                </div>
+            </div>
+
+            <!-- Filename input -->
+            <div class="scan-form-row">
+                <label class="scan-form-label" for="scan-filename-input">ファイル名（バーコードから自動入力）</label>
+                <div class="scan-filename-wrap">
+                    <input id="scan-filename-input" type="text" class="scan-filename-input" placeholder="例: 12345678（拡張子不要）">
+                    <span class="scan-ext-label">.png</span>
+                </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="scan-modal-actions">
+                <button id="btn-scan-capture" class="btn-primary" type="button"><i class="fa-solid fa-camera"></i> 撮影</button>
+                <button id="btn-scan-retake" class="btn-secondary hidden" type="button"><i class="fa-solid fa-rotate-left"></i> 撮り直す</button>
+                <button id="btn-scan-upload" class="btn-primary hidden" type="button"><i class="fa-solid fa-upload"></i> アップロード</button>
+                <button id="btn-scan-cancel" class="btn-secondary" type="button">キャンセル</button>
+            </div>
+        </div>
+    </div>
 
     <script src="js/shared.js"></script>
     <script src="js/admin-panel.js"></script>
