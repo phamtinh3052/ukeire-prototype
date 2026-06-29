@@ -65,11 +65,14 @@ const scanVideo = document.getElementById('scan-video');
 const scanCameraView = document.getElementById('scan-camera-view');
 const scanCaptureView = document.getElementById('scan-capture-view');
 const scanCaptureImg = document.getElementById('scan-capture-img');
+const scanCropOverlay = document.getElementById('scan-crop-overlay');
 const scanBarcodeBadge = document.getElementById('scan-barcode-badge');
 const scanBarcodeCodeEl = document.getElementById('scan-barcode-code');
 const scanLiveStatus = document.getElementById('scan-live-status');
 const scanFilenameInput = document.getElementById('scan-filename-input');
 const btnScanCapture = document.getElementById('btn-scan-capture');
+const btnScanCropSelect = document.getElementById('btn-scan-crop-select');
+const btnScanCropApply = document.getElementById('btn-scan-crop-apply');
 const btnScanRetake = document.getElementById('btn-scan-retake');
 const btnScanUpload = document.getElementById('btn-scan-upload');
 const btnScanClose = document.getElementById('btn-scan-close');
@@ -82,6 +85,9 @@ let scanStream = null;
 let scanIntervalId = null;
 let scanCapturedDataUrl = null;
 let scanDetectedCode = null;
+let scanCropActive = false;
+let scanCropStartPoint = null;
+let scanCropRect = null;
 
 let linesHistory = [];
 let currentLine = null;
@@ -1990,10 +1996,24 @@ fileInput.addEventListener('change', (e) => createRecordFromUpload(e.target.file
 btnUploadFolder.addEventListener('click', () => folderInput.click());
 if (btnScanOpen) btnScanOpen.addEventListener('click', openScanModal);
 if (btnScanCapture) btnScanCapture.addEventListener('click', handleScanCapture);
+if (btnScanCropSelect) btnScanCropSelect.addEventListener('click', beginScanCropSelection);
+if (btnScanCropApply) btnScanCropApply.addEventListener('click', applyScanCropSelection);
 if (btnScanRetake) btnScanRetake.addEventListener('click', handleScanRetake);
 if (btnScanUpload) btnScanUpload.addEventListener('click', handleScanUpload);
 if (btnScanClose) btnScanClose.addEventListener('click', closeScanModal);
 if (btnScanCancel) btnScanCancel.addEventListener('click', closeScanModal);
+if (scanCropOverlay) {
+    scanCropOverlay.addEventListener('pointerdown', handleScanCropPointerDown);
+    scanCropOverlay.addEventListener('pointermove', handleScanCropPointerMove);
+    scanCropOverlay.addEventListener('pointerup', handleScanCropPointerUp);
+    scanCropOverlay.addEventListener('pointercancel', handleScanCropPointerUp);
+}
+if (scanCaptureImg) {
+    scanCaptureImg.addEventListener('load', () => {
+        resizeScanCropOverlay();
+        drawScanCropOverlay();
+    });
+}
 if (scanModal) {
     scanModal.addEventListener('click', (e) => {
         if (e.target === scanModal) closeScanModal();
@@ -2305,9 +2325,13 @@ async function openScanModal() {
     scanDetectedCode = null;
     if (scanFilenameInput) scanFilenameInput.value = '';
     scanBarcodeBadge?.classList.add('hidden');
+    setScanCropMode(false);
+    clearScanCropRect();
     scanCameraView?.classList.remove('hidden');
     scanCaptureView?.classList.add('hidden');
     btnScanCapture?.classList.remove('hidden');
+    btnScanCropSelect?.classList.add('hidden');
+    btnScanCropApply?.classList.add('hidden');
     btnScanRetake?.classList.add('hidden');
     btnScanUpload?.classList.add('hidden');
     scanModal.classList.remove('hidden');
@@ -2319,6 +2343,8 @@ function closeScanModal() {
     if (scanModal) scanModal.classList.add('hidden');
     scanCapturedDataUrl = null;
     scanDetectedCode = null;
+    setScanCropMode(false);
+    clearScanCropRect();
 }
 
 async function startScanCamera() {
@@ -2439,6 +2465,180 @@ function decodeScanBarcodeAsync(dataUrl) {
     });
 }
 
+function setScanCropMode(active) {
+    scanCropActive = !!active;
+    if (scanCropOverlay) scanCropOverlay.classList.toggle('active', scanCropActive);
+}
+
+function resizeScanCropOverlay() {
+    if (!scanCropOverlay) return;
+    const rect = scanCropOverlay.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (scanCropOverlay.width !== width) scanCropOverlay.width = width;
+    if (scanCropOverlay.height !== height) scanCropOverlay.height = height;
+}
+
+function clearScanCropRect() {
+    scanCropRect = null;
+    scanCropStartPoint = null;
+    drawScanCropOverlay();
+}
+
+function drawScanCropOverlay() {
+    if (!scanCropOverlay) return;
+    resizeScanCropOverlay();
+    const ctx = scanCropOverlay.getContext('2d');
+    if (!ctx) return;
+    const w = scanCropOverlay.width;
+    const h = scanCropOverlay.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!scanCropRect) return;
+
+    const x = Math.max(0, Math.min(w, scanCropRect.x));
+    const y = Math.max(0, Math.min(h, scanCropRect.y));
+    const rw = Math.max(0, Math.min(w - x, scanCropRect.width));
+    const rh = Math.max(0, Math.min(h - y, scanCropRect.height));
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.clearRect(x, y, rw, rh);
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, rw - 1), Math.max(0, rh - 1));
+}
+
+function getScanCropPointFromEvent(e) {
+    if (!scanCropOverlay) return null;
+    const rect = scanCropOverlay.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    return { x, y };
+}
+
+function beginScanCropSelection() {
+    if (!scanCapturedDataUrl) {
+        showUploadToast('先に撮影してください。', 'info', 2200);
+        return;
+    }
+    setScanCropMode(true);
+    clearScanCropRect();
+    if (btnScanCropApply) btnScanCropApply.classList.remove('hidden');
+    showUploadToast('画像上をドラッグして切り抜き範囲を選択してください。', 'info', 2600);
+}
+
+function handleScanCropPointerDown(e) {
+    if (!scanCropActive) return;
+    const p = getScanCropPointFromEvent(e);
+    if (!p) return;
+    scanCropStartPoint = p;
+    scanCropRect = { x: p.x, y: p.y, width: 0, height: 0 };
+    drawScanCropOverlay();
+    scanCropOverlay.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+}
+
+function handleScanCropPointerMove(e) {
+    if (!scanCropActive || !scanCropStartPoint) return;
+    const p = getScanCropPointFromEvent(e);
+    if (!p) return;
+    const x = Math.min(scanCropStartPoint.x, p.x);
+    const y = Math.min(scanCropStartPoint.y, p.y);
+    const width = Math.abs(p.x - scanCropStartPoint.x);
+    const height = Math.abs(p.y - scanCropStartPoint.y);
+    scanCropRect = { x, y, width, height };
+    drawScanCropOverlay();
+    e.preventDefault();
+}
+
+function handleScanCropPointerUp(e) {
+    if (!scanCropActive) return;
+    scanCropStartPoint = null;
+    if (scanCropRect && (scanCropRect.width < 8 || scanCropRect.height < 8)) {
+        scanCropRect = null;
+        drawScanCropOverlay();
+    }
+    scanCropOverlay.releasePointerCapture?.(e.pointerId);
+}
+
+function convertOverlayRectToImageRect() {
+    if (!scanCropOverlay || !scanCaptureImg || !scanCropRect) return null;
+    const overlayW = scanCropOverlay.width;
+    const overlayH = scanCropOverlay.height;
+    const imageW = scanCaptureImg.naturalWidth;
+    const imageH = scanCaptureImg.naturalHeight;
+    if (!overlayW || !overlayH || !imageW || !imageH) return null;
+
+    const scale = Math.min(overlayW / imageW, overlayH / imageH);
+    const drawW = imageW * scale;
+    const drawH = imageH * scale;
+    const offsetX = (overlayW - drawW) / 2;
+    const offsetY = (overlayH - drawH) / 2;
+
+    const x1 = Math.max(scanCropRect.x, offsetX);
+    const y1 = Math.max(scanCropRect.y, offsetY);
+    const x2 = Math.min(scanCropRect.x + scanCropRect.width, offsetX + drawW);
+    const y2 = Math.min(scanCropRect.y + scanCropRect.height, offsetY + drawH);
+
+    if (x2 <= x1 || y2 <= y1) return null;
+
+    const sx = Math.max(0, Math.floor((x1 - offsetX) / scale));
+    const sy = Math.max(0, Math.floor((y1 - offsetY) / scale));
+    const sw = Math.min(imageW - sx, Math.ceil((x2 - x1) / scale));
+    const sh = Math.min(imageH - sy, Math.ceil((y2 - y1) / scale));
+
+    if (sw < 4 || sh < 4) return null;
+    return { sx, sy, sw, sh };
+}
+
+async function applyScanCropSelection() {
+    if (!scanCropRect) {
+        showUploadToast('切り抜き範囲を選択してください。', 'info', 2200);
+        return;
+    }
+    const imgRect = convertOverlayRectToImageRect();
+    if (!imgRect) {
+        showUploadToast('画像上の有効な範囲を選択してください。', 'error', 2500);
+        return;
+    }
+
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = imgRect.sw;
+    tmpCanvas.height = imgRect.sh;
+    const tmpCtx = tmpCanvas.getContext('2d');
+    if (!tmpCtx) return;
+    tmpCtx.drawImage(
+        scanCaptureImg,
+        imgRect.sx,
+        imgRect.sy,
+        imgRect.sw,
+        imgRect.sh,
+        0,
+        0,
+        imgRect.sw,
+        imgRect.sh
+    );
+
+    const croppedDataUrl = tmpCanvas.toDataURL('image/png');
+    scanCapturedDataUrl = croppedDataUrl;
+    scanCaptureImg.src = croppedDataUrl;
+    setScanCropMode(false);
+    clearScanCropRect();
+    if (btnScanCropApply) btnScanCropApply.classList.add('hidden');
+
+    const detected = (await decodeScanBarcodeAsync(croppedDataUrl)) || '';
+    if (detected) {
+        scanDetectedCode = detected;
+        if (scanBarcodeCodeEl) scanBarcodeCodeEl.textContent = detected;
+        scanBarcodeBadge?.classList.remove('hidden');
+        if (scanFilenameInput && !scanFilenameInput.value.trim()) scanFilenameInput.value = detected;
+        showUploadToast('切り抜きを適用しました。バーコードを更新しました。', 'success', 2600);
+        return;
+    }
+
+    showUploadToast('切り抜きを適用しました。', 'success', 2200);
+}
+
 async function handleScanCapture() {
     const dataUrl = captureScanFrame(1.0);
     if (!dataUrl) {
@@ -2451,7 +2651,12 @@ async function handleScanCapture() {
     scanCameraView?.classList.add('hidden');
     scanCaptureView?.classList.remove('hidden');
     if (scanCaptureImg) scanCaptureImg.src = dataUrl;
+    resizeScanCropOverlay();
+    clearScanCropRect();
+    setScanCropMode(false);
     btnScanCapture?.classList.add('hidden');
+    btnScanCropSelect?.classList.remove('hidden');
+    btnScanCropApply?.classList.add('hidden');
     btnScanRetake?.classList.remove('hidden');
     btnScanUpload?.classList.remove('hidden');
     scanBarcodeBadge?.classList.add('hidden');
@@ -2474,9 +2679,13 @@ async function handleScanRetake() {
     scanCapturedDataUrl = null;
     scanDetectedCode = null;
     scanBarcodeBadge?.classList.add('hidden');
+    setScanCropMode(false);
+    clearScanCropRect();
     scanCaptureView?.classList.add('hidden');
     scanCameraView?.classList.remove('hidden');
     btnScanCapture?.classList.remove('hidden');
+    btnScanCropSelect?.classList.add('hidden');
+    btnScanCropApply?.classList.add('hidden');
     btnScanRetake?.classList.add('hidden');
     btnScanUpload?.classList.add('hidden');
     await startScanCamera();
@@ -2512,6 +2721,10 @@ async function handleScanUpload() {
 
 window.addEventListener('resize', () => {
     if (rawSourceData && currentScale === baseScale) resetToFit();
+    if (!scanCaptureView?.classList.contains('hidden')) {
+        resizeScanCropOverlay();
+        drawScanCropOverlay();
+    }
     if (isMobileView()) {
         appRoot.classList.remove('sidebar-collapsed');
     } else {

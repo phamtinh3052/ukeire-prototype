@@ -194,6 +194,7 @@
             </div>
             <div id="scan-capture-view" class="scan-capture-view hidden">
                 <img id="scan-capture-img" alt="撮影した画像">
+                <canvas id="scan-crop-overlay" class="scan-crop-overlay"></canvas>
                 <div id="scan-barcode-badge" class="scan-barcode-badge hidden">
                     <i class="fa-solid fa-barcode"></i>
                     <span>コード: </span><span id="scan-barcode-code" class="scan-barcode-code-val"></span>
@@ -208,6 +209,8 @@
             </div>
             <div class="scan-modal-actions">
                 <button id="btn-scan-capture" class="btn-primary" type="button"><i class="fa-solid fa-camera"></i> 撮影</button>
+                <button id="btn-scan-crop-select" class="btn-secondary hidden" type="button"><i class="fa-solid fa-crop-simple"></i> 切り抜き範囲</button>
+                <button id="btn-scan-crop-apply" class="btn-primary hidden" type="button"><i class="fa-solid fa-check"></i> 切り抜きを適用</button>
                 <button id="btn-scan-retake" class="btn-secondary hidden" type="button"><i class="fa-solid fa-rotate-left"></i> 撮り直す</button>
                 <button id="btn-scan-upload" class="btn-primary hidden" type="button"><i class="fa-solid fa-upload"></i> アップロード</button>
                 <button id="btn-scan-cancel" class="btn-secondary" type="button">キャンセル</button>
