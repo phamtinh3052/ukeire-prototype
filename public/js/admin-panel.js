@@ -37,6 +37,7 @@ const nohinshoStatusInput = document.getElementById('nohinsho-status');
 const nohinshoUrlInput = document.getElementById('nohinsho-url');
 const btnNohinshoSave = document.getElementById('btn-nohinsho-save');
 const btnNohinshoDelete = document.getElementById('btn-nohinsho-delete');
+const btnNohinshoApplyUpload = document.getElementById('btn-nohinsho-apply-upload');
 const btnNohinshoScan = document.getElementById('btn-nohinsho-scan');
 const nohinshoFileInput = document.getElementById('nohinsho-file-input');
 const nohinshoFolderInput = document.getElementById('nohinsho-folder-input');
@@ -577,6 +578,9 @@ function isSupportedUploadFile(file) {
 }
 
 function dataUrlToBlob(dataUrl) {
+    if (typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+        throw new Error('Invalid data URL');
+    }
     const parts = dataUrl.split(',');
     if (parts.length !== 2) throw new Error('Invalid data URL');
     const mimeMatch = parts[0].match(/data:(.*?);base64/);
@@ -1076,7 +1080,7 @@ async function purgeSoftDeletedRecords() {
     if (!confirmed) return;
 
     try {
-        btnNohinshoPurgeDeleted.disabled = true;
+        if (btnNohinshoPurgeDeleted) btnNohinshoPurgeDeleted.disabled = true;
         showAdminToast('削除済みデータを完全削除中...', 'info', 3000);
 
         await waitForRecordSyncIdle();
@@ -1100,7 +1104,7 @@ async function purgeSoftDeletedRecords() {
         showAdminToast(`完全削除失敗: ${error.message || 'network error'}`, 'error', 3000);
     } finally {
         setNohinshoListLoading(false);
-        btnNohinshoPurgeDeleted.disabled = false;
+        if (btnNohinshoPurgeDeleted) btnNohinshoPurgeDeleted.disabled = false;
     }
 }
 
@@ -1272,14 +1276,21 @@ async function handleScanRetake() {
 }
 
 async function handleScanUpload() {
-    if (!scanCapturedDataUrl) {
+    const capturedDataUrl = scanCapturedDataUrl || scanCaptureImg?.src || '';
+    if (!capturedDataUrl) {
         showAdminToast('まず撮影してください。', 'error');
         return;
     }
     const rawName = scanFilenameInput.value.trim();
     const fileName = rawName ? `${rawName}.png` : `scan-${Date.now()}.png`;
+    let blob;
+    try {
+        blob = dataUrlToBlob(capturedDataUrl);
+    } catch (error) {
+        showAdminToast('撮影画像の変換に失敗しました。もう一度撮影してください。', 'error');
+        return;
+    }
     closeScanModal();
-    const blob = dataUrlToBlob(scanCapturedDataUrl);
     const file = new File([blob], fileName, { type: 'image/png' });
     await uploadNohinshoFile(file, nohinshoDateInput.value || todayDateString());
 }
@@ -1379,7 +1390,7 @@ nohinshoSortInput.addEventListener('change', renderNohinshoRecords);
 
 btnNohinshoUpload.addEventListener('click', () => nohinshoFileInput.click());
 btnNohinshoUploadFolder.addEventListener('click', () => nohinshoFolderInput.click());
-btnNohinshoPurgeDeleted.addEventListener('click', purgeSoftDeletedRecords);
+if (btnNohinshoPurgeDeleted) btnNohinshoPurgeDeleted.addEventListener('click', purgeSoftDeletedRecords);
 btnNohinshoScan.addEventListener('click', openScanModal);
 
 // Scan modal events

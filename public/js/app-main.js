@@ -1094,6 +1094,9 @@ function cloneLines(lines) {
 }
 
 function dataUrlToBlob(dataUrl) {
+    if (typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+        throw new Error('Invalid data URL');
+    }
     const parts = dataUrl.split(',');
     if (parts.length !== 2) throw new Error('Invalid data URL');
     const mimeMatch = parts[0].match(/data:(.*?);base64/);
@@ -2473,14 +2476,21 @@ async function handleScanRetake() {
 }
 
 async function handleScanUpload() {
-    if (!scanCapturedDataUrl) {
+    const capturedDataUrl = scanCapturedDataUrl || scanCaptureImg?.src || '';
+    if (!capturedDataUrl) {
         showUploadToast('まず撮影してください。', 'error');
         return;
     }
     const rawName = scanFilenameInput.value.trim();
     const fileName = rawName ? `${rawName}.png` : `scan-${Date.now()}.png`;
+    let blob;
+    try {
+        blob = dataUrlToBlob(capturedDataUrl);
+    } catch (error) {
+        showUploadToast('撮影画像の変換に失敗しました。もう一度撮影してください。', 'error');
+        return;
+    }
     closeScanModal();
-    const blob = dataUrlToBlob(scanCapturedDataUrl);
     const file = new File([blob], fileName, { type: 'image/png' });
     await createRecordFromUpload(file);
 }

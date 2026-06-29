@@ -59,10 +59,29 @@ const recordsList = document.getElementById('records-list');
 const stampFamilyNameInput = document.getElementById('stamp-family-name');
 const stampGivenNameInput = document.getElementById('stamp-given-name');
 const stampDateInput = document.getElementById('stamp-date');
+const btnScanOpen = document.getElementById('btn-scan-open');
+const scanModal = document.getElementById('scan-modal');
+const scanVideo = document.getElementById('scan-video');
+const scanCameraView = document.getElementById('scan-camera-view');
+const scanCaptureView = document.getElementById('scan-capture-view');
+const scanCaptureImg = document.getElementById('scan-capture-img');
+const scanBarcodeBadge = document.getElementById('scan-barcode-badge');
+const scanBarcodeCodeEl = document.getElementById('scan-barcode-code');
+const scanLiveStatus = document.getElementById('scan-live-status');
+const scanFilenameInput = document.getElementById('scan-filename-input');
+const btnScanCapture = document.getElementById('btn-scan-capture');
+const btnScanRetake = document.getElementById('btn-scan-retake');
+const btnScanUpload = document.getElementById('btn-scan-upload');
+const btnScanClose = document.getElementById('btn-scan-close');
+const btnScanCancel = document.getElementById('btn-scan-cancel');
 
 let currentUser = null;
 let currentRecordId = null;
 let rawSourceData = null;
+let scanStream = null;
+let scanIntervalId = null;
+let scanCapturedDataUrl = null;
+let scanDetectedCode = null;
 
 let linesHistory = [];
 let currentLine = null;
@@ -1052,6 +1071,9 @@ function cloneLines(lines) {
 }
 
 function dataUrlToBlob(dataUrl) {
+    if (typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+        throw new Error('Invalid data URL');
+    }
     const parts = dataUrl.split(',');
     if (parts.length !== 2) throw new Error('Invalid data URL');
     const mimeMatch = parts[0].match(/data:(.*?);base64/);
@@ -1966,6 +1988,20 @@ btnOpenAdmin.addEventListener('click', async () => {
 btnUpload.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => createRecordFromUpload(e.target.files[0]));
 btnUploadFolder.addEventListener('click', () => folderInput.click());
+if (btnScanOpen) btnScanOpen.addEventListener('click', openScanModal);
+if (btnScanCapture) btnScanCapture.addEventListener('click', handleScanCapture);
+if (btnScanRetake) btnScanRetake.addEventListener('click', handleScanRetake);
+if (btnScanUpload) btnScanUpload.addEventListener('click', handleScanUpload);
+if (btnScanClose) btnScanClose.addEventListener('click', closeScanModal);
+if (btnScanCancel) btnScanCancel.addEventListener('click', closeScanModal);
+if (scanModal) {
+    scanModal.addEventListener('click', (e) => {
+        if (e.target === scanModal) closeScanModal();
+    });
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && scanModal && !scanModal.classList.contains('hidden')) closeScanModal();
+});
 folderInput.addEventListener('change', async (e) => {
     await createRecordsFromFolder(e.target.files);
     folderInput.value = '';
@@ -2262,6 +2298,203 @@ paintCanvas.addEventListener('pointerenter', (e) => {
     updateEraserIndicatorPosition(e);
     updateStampIndicatorPosition(e);
 });
+
+async function openScanModal() {
+    if (!scanModal) return;
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+    if (scanFilenameInput) scanFilenameInput.value = '';
+    scanBarcodeBadge?.classList.add('hidden');
+    scanCameraView?.classList.remove('hidden');
+    scanCaptureView?.classList.add('hidden');
+    btnScanCapture?.classList.remove('hidden');
+    btnScanRetake?.classList.add('hidden');
+    btnScanUpload?.classList.add('hidden');
+    scanModal.classList.remove('hidden');
+    await startScanCamera();
+}
+
+function closeScanModal() {
+    stopScanCamera();
+    if (scanModal) scanModal.classList.add('hidden');
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+}
+
+async function startScanCamera() {
+    if (!scanVideo || !scanLiveStatus) return;
+    try {
+        scanLiveStatus.textContent = 'カメラを起動中...';
+        scanLiveStatus.style.background = '';
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 960 }
+            }
+        });
+        scanStream = stream;
+        scanVideo.srcObject = stream;
+        await new Promise((resolve, reject) => {
+            let settled = false;
+            const done = (fn) => () => {
+                if (settled) return;
+                settled = true;
+                fn();
+            };
+            scanVideo.onloadedmetadata = done(resolve);
+            scanVideo.onerror = done(() => reject(new Error('Video metadata load failed')));
+            setTimeout(done(() => reject(new Error('Camera start timeout'))), 8000);
+        });
+        await scanVideo.play();
+        scanLiveStatus.textContent = 'バーコードにカメラを向けてください...';
+        startLiveBarcodeScanning();
+    } catch (error) {
+        scanLiveStatus.textContent = `⚠ カメラ起動失敗: ${error.message || '権限を確認してください'}`;
+        scanLiveStatus.style.background = 'rgba(180,35,24,0.75)';
+    }
+}
+
+function stopScanCamera() {
+    stopLiveBarcodeScanning();
+    if (scanStream) {
+        scanStream.getTracks().forEach((t) => t.stop());
+        scanStream = null;
+    }
+    if (scanVideo) scanVideo.srcObject = null;
+}
+
+function startLiveBarcodeScanning() {
+    stopLiveBarcodeScanning();
+    if (!window.Quagga) return;
+    scanIntervalId = setInterval(() => {
+        if (!scanStream || !scanVideo || scanVideo.readyState < 2 || scanCapturedDataUrl) return;
+        const dataUrl = captureScanFrame(0.8);
+        if (!dataUrl) return;
+        decodeScanBarcode(dataUrl, (code) => {
+            if (!code || scanCapturedDataUrl) return;
+            if (scanDetectedCode !== code) {
+                scanDetectedCode = code;
+                if (scanLiveStatus) {
+                    scanLiveStatus.textContent = `✅ コード検出: ${code}`;
+                    scanLiveStatus.style.background = 'rgba(22,163,74,0.75)';
+                }
+                if (scanFilenameInput && !scanFilenameInput.value) scanFilenameInput.value = code;
+                if (navigator.vibrate) navigator.vibrate(90);
+            }
+        });
+    }, 1000);
+}
+
+function stopLiveBarcodeScanning() {
+    if (scanIntervalId) {
+        clearInterval(scanIntervalId);
+        scanIntervalId = null;
+    }
+}
+
+function captureScanFrame(quality = 1.0) {
+    if (!scanVideo || !scanVideo.videoWidth) return null;
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = scanVideo.videoWidth;
+    tmpCanvas.height = scanVideo.videoHeight;
+    const ctx = tmpCanvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(scanVideo, 0, 0);
+    return quality < 1 ? tmpCanvas.toDataURL('image/jpeg', quality) : tmpCanvas.toDataURL('image/png');
+}
+
+function decodeScanBarcode(dataUrl, callback) {
+    if (!window.Quagga) {
+        callback(null);
+        return;
+    }
+    try {
+        Quagga.decodeSingle({
+            src: dataUrl,
+            numOfWorkers: 0,
+            inputStream: { size: 900 },
+            decoder: {
+                readers: [
+                    'code_128_reader',
+                    'ean_reader',
+                    'ean_8_reader',
+                    'code_39_reader',
+                    'code_93_reader',
+                    'upc_reader',
+                    'upc_e_reader',
+                    'codabar_reader'
+                ]
+            },
+            locate: true
+        }, (result) => callback(result?.codeResult?.code || null));
+    } catch {
+        callback(null);
+    }
+}
+
+async function handleScanCapture() {
+    const dataUrl = captureScanFrame(1.0);
+    if (!dataUrl) {
+        showUploadToast('カメラからフレームを取得できませんでした。', 'error');
+        return;
+    }
+    scanCapturedDataUrl = dataUrl;
+    stopScanCamera();
+
+    scanCameraView?.classList.add('hidden');
+    scanCaptureView?.classList.remove('hidden');
+    if (scanCaptureImg) scanCaptureImg.src = dataUrl;
+    btnScanCapture?.classList.add('hidden');
+    btnScanRetake?.classList.remove('hidden');
+    btnScanUpload?.classList.remove('hidden');
+    scanBarcodeBadge?.classList.add('hidden');
+
+    showUploadToast('バーコードを解析中...', 'info', 2500);
+    decodeScanBarcode(dataUrl, (code) => {
+        const detected = code || scanDetectedCode;
+        if (detected) {
+            if (scanBarcodeCodeEl) scanBarcodeCodeEl.textContent = detected;
+            scanBarcodeBadge?.classList.remove('hidden');
+            if (scanFilenameInput && !scanFilenameInput.value) scanFilenameInput.value = detected;
+            showUploadToast(`✅ バーコード: ${detected}`, 'success', 3000);
+        } else {
+            showUploadToast('バーコードは検出できませんでした。手動でファイル名を入力してください。', 'info', 4000);
+        }
+    });
+}
+
+async function handleScanRetake() {
+    scanCapturedDataUrl = null;
+    scanDetectedCode = null;
+    scanBarcodeBadge?.classList.add('hidden');
+    scanCaptureView?.classList.add('hidden');
+    scanCameraView?.classList.remove('hidden');
+    btnScanCapture?.classList.remove('hidden');
+    btnScanRetake?.classList.add('hidden');
+    btnScanUpload?.classList.add('hidden');
+    await startScanCamera();
+}
+
+async function handleScanUpload() {
+    const capturedDataUrl = scanCapturedDataUrl || scanCaptureImg?.src || '';
+    if (!capturedDataUrl) {
+        showUploadToast('まず撮影してください。', 'error');
+        return;
+    }
+    const rawName = scanFilenameInput?.value.trim() || '';
+    const fileName = rawName ? `${rawName}.png` : `scan-${Date.now()}.png`;
+    let blob;
+    try {
+        blob = dataUrlToBlob(capturedDataUrl);
+    } catch {
+        showUploadToast('撮影画像の変換に失敗しました。もう一度撮影してください。', 'error');
+        return;
+    }
+    closeScanModal();
+    const file = new File([blob], fileName, { type: 'image/png' });
+    await createRecordFromUpload(file);
+}
 
 window.addEventListener('resize', () => {
     if (rawSourceData && currentScale === baseScale) resetToFit();
